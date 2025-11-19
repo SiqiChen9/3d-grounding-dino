@@ -131,9 +131,9 @@ we run a small Grounding DINO demo using MMDetection.
    wget https://download.openmmlab.com/mmdetection/v3.0/mm_grounding_dino/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth
    ```
    对于windows用户:
-   '''bash
+   ```bash
    curl -O https://download.openmmlab.com/mmdetection/v3.0/mm_grounding_dino/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth
-   '''
+   ```
    或者可以直接粘贴命令中的地址在浏览器下载（注意下载到mmdetection根目录）
 
 3. Run the following test script **from the `mmdetection` root directory**:
