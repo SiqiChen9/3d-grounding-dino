@@ -1,0 +1,8 @@
+name: openmmlab
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - torchvision
+  - conda-forge::nibabel
+prefix: /Users/siqichen/miniconda3/envs/openmmlab
