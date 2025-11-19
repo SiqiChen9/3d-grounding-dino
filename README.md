@@ -130,8 +130,13 @@ we run a small Grounding DINO demo using MMDetection.
 
    wget https://download.openmmlab.com/mmdetection/v3.0/mm_grounding_dino/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth
    ```
+   对于windows用户:
+   '''bash
+   curl -O https://download.openmmlab.com/mmdetection/v3.0/mm_grounding_dino/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth
+   '''
+   或者可以直接粘贴命令中的地址在浏览器下载（注意下载到mmdetection根目录）
 
-2. Run the following test script **from the `mmdetection` root directory**:
+3. Run the following test script **from the `mmdetection` root directory**:
 
 ```bash
 cd path/to/your/workspace/mmdetection
@@ -155,6 +160,31 @@ res = inferencer(
 )
 print('done, saved to outputs')
 PY
+```
+对于Windows用户请用如下测试脚本：
+
+```bash
+import nltk
+
+from mmdet.apis import DetInferencer
+
+nltk.download('punkt_tab')
+nltk.download('averaged_perceptron_tagger_eng')
+
+inferencer = DetInferencer(
+    model='configs/mm_grounding_dino/grounding_dino_swin-t_pretrain_obj365.py',
+    weights='grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth',
+    device='cpu'  # use 'cpu' on macOS / Windows; on Linux with NVIDIA GPU you can use 'cuda:0'
+)
+
+res = inferencer(
+    inputs='demo/demo.jpg',		# you can replace this with your own image
+    texts='a car. a tree.',		# you can replace this with the object you want to detect
+    pred_score_thr=0.3,
+    out_dir='outputs',
+    return_vis=True
+)
+print('done, saved to outputs')
 ```
 
 If the installation is successful, the script will finish with:
