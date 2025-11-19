@@ -98,27 +98,19 @@ conda env create -f environment.yml -n 3d-detection
 conda activate 3d-detection
 ```
 
-> Note: `environment.yml` intentionally does **not** include `mmcv` / `mmdet`.
-> They are installed manually in the next steps.
 
-### 2. Install MMCV and MMDetection from Git
+### 2. Install Python dependencies
 
 Install MMCV and MMDetection from their GitHub repositories at specific tags:
 
 ```bash
-# From the conda environment "3d-detection"
-conda activate 3d-detection
+pip install -r requirements.txt
 
-# Install MMCV and MMDetection (from source)
-pip install "mmcv @ git+https://github.com/open-mmlab/mmcv.git@v2.1.0"
-pip install "mmdet @ git+https://github.com/open-mmlab/mmdetection.git@v3.3.0"
+# Some environments may create an `src/` directory during installation.
+# It is not used in this project, so we remove it to avoid confusion.
+rm -rf src
 ```
-
-> These commands may build from source on some platforms (especially on Windows).
-> Make sure you have a working compiler toolchain (and CUDA toolkit if you are using GPU builds).
-
-We will also use the cloned MMDetection repository (`mmdetection`) for the example
-configuration and demo image.
+This should work on Linux, Windows and macOS.
 
 ---
 
