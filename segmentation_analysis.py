@@ -5,6 +5,7 @@ Uses relative paths for GitHub collaboration.
 """
 import nibabel as nib
 import numpy as np
+import pandas as pd
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -40,6 +41,81 @@ class SegmentationAnalyzer:
             4: [255, 255, 0, 255],  # Yellow
             5: [255, 0, 255, 255],  # Magenta
         }
+
+        self.study_id = "10004"  # 当前研究的ID
+        self.injury_data = self._load_injury_data()
+
+        self.label_names = {
+            0: 'Background',
+            1: self._get_label_with_injury('Liver'),
+            2: self._get_label_with_injury('Spleen'),
+            3: 'Left_Kidney',  # 左肾
+            4: 'Right_Kidney',  # 右肾
+            5: self._get_label_with_injury('Bowel')
+        }
+
+    def _load_injury_data(self):
+        """读取器官损伤信息"""
+        csv_path = "./datasets/train_2024.csv"
+        try:
+            df = pd.read_csv(csv_path)
+            row = df[df['patient_id'] == int(self.study_id)]
+
+            if row.empty:
+                print(f"⚠ 未找到 patient_id={self.study_id} 的数据")
+                return self._get_default_injury_data()
+
+            injury_info = {}
+
+            # 肠道：2种状态
+            injury_info['bowel'] = {
+                'healthy': int(row['bowel_healthy'].values[0]),
+                'injury': int(row['bowel_injury'].values[0])
+            }
+
+            # 肝脏：3种等级
+            injury_info['liver'] = {
+                'healthy': int(row['liver_healthy'].values[0]),
+                'low': int(row['liver_low'].values[0]),
+                'high': int(row['liver_high'].values[0])
+            }
+
+            # 脾脏：3种等级
+            injury_info['spleen'] = {
+                'healthy': int(row['spleen_healthy'].values[0]),
+                'low': int(row['spleen_low'].values[0]),
+                'high': int(row['spleen_high'].values[0])
+            }
+
+            return injury_info
+
+        except Exception as e:
+            print(f"⚠ 无法读取损伤数据: {e}")
+            return self._get_default_injury_data()
+
+    def _get_default_injury_data(self):
+        """返回默认损伤数据"""
+        return {
+            'bowel': {'healthy': 0, 'injury': 0},
+            'liver': {'healthy': 0, 'low': 0, 'high': 0},
+            'spleen': {'healthy': 0, 'low': 0, 'high': 0}
+        }
+
+    def _get_label_with_injury(self, organ_name):
+        """生成包含损伤信息的标签"""
+        organ_key = organ_name.lower()
+
+        if organ_key not in self.injury_data:
+            return organ_name
+
+        states = self.injury_data[organ_key]
+        active_states = [state.capitalize() for state, value in states.items() if value == 1]
+
+        if not active_states:
+            return f"{organ_name} (?)"
+
+        status_str = "/".join(active_states)
+        return f"{organ_name} ({status_str})"
 
     def load_image(self, image_index):
         """Load JPEG image for given index."""
@@ -259,18 +335,38 @@ class SegmentationAnalyzer:
                 ax.axis('off')
 
         legend_elements = [
-            mpatches.Patch(color=[c/255 for c in self.label_colors[i][:3]], label=f'Label {i}')
+            mpatches.Patch(color=[c / 255 for c in self.label_colors[i][:3]], label=self.label_names[i])
             for i in range(1, 6)
         ]
-        fig.legend(handles=legend_elements, loc='lower center', ncol=5, fontsize=11,
-                  bbox_to_anchor=(0.5, -0.02), frameon=True)
+
+        # 添加这一行：在图表顶部显示图例
+        fig.legend(handles=legend_elements, loc='lower center', ncol=5,
+                   fontsize=10, frameon=True, fancybox=True, shadow=True,
+                   bbox_to_anchor=(0.5, -0.05))
 
         plt.suptitle('Multi-Label Segmentation Overlays', fontsize=14, fontweight='bold')
-        plt.tight_layout(rect=[0, 0.03, 1, 0.99])
+        plt.tight_layout(rect=[0, 0.03, 1, 0.96])  # 调整布局，为图例留出空间
         output_path = os.path.join(OUTPUT_DIR, "multilabel_overlays.png")
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"✓ Saved to: {output_path}\n")
         plt.close()
+
+    def _format_injury_text(self):
+        """格式化损伤信息文本"""
+        sections = []
+
+        for organ in ['liver', 'spleen', 'bowel']:
+            states = self.injury_data.get(organ, {})
+            active = [state.capitalize() for state, value in states.items() if value == 1]
+
+            if active:
+                status = ", ".join(active)
+            else:
+                status = "Unknown"
+
+            sections.append(f"{organ.capitalize()}: {status}")
+
+        return " | ".join(sections)
 
     def run_all(self):
         """Run all analyses."""
