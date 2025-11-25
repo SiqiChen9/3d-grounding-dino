@@ -1,21 +1,201 @@
 # 3D Grounded Detection for CT
 
-> **Status:** Work in progress 
-> This repository is the codebase for a research project on 3D object detection and classification in CT volumes, combining 3D transformers (Swin3D), DETR-style architectures, and grounding-style supervision.
+> **Status:** MVP Complete ✓
+> 
+> This repository implements a 3D object detection framework for CT scans, combining 3D Swin Transformers, DETR-style architecture, and grounding-style supervision with pseudo-class tokens.
 
 ---
 
 ## Overview
 
-This project aims to build a **3D detection and classification framework for CT scans** with:
+This project provides a **3D detection and classification framework for CT scans** with:
 
-- A **3D feature extractor** based on Swin Transformer for CT volumes  
-- A **3D implementation of DETR** (encoder + decoder)  
-- Integration of a **text / pseudo-class token encoder** (Grounding DINO–style)  
-- **Pretraining on multiple CT datasets**, followed by task-specific finetuning  
-- Evaluation on **3D detection** and **3D classification** baselines
+- ✓ **3D feature extractor** based on Swin Transformer for CT volumes  
+- ✓ **3D implementation of DETR** (encoder + decoder)  
+- ✓ **Pseudo-class token encoder** (simplified Grounding DINO-style approach)
+- ✓ **Complete training pipeline** with loss functions and evaluation metrics
+- **Pretraining on multiple CT datasets** (planned)
+- **Comparison with detection baselines** (planned)
+- **Evaluation on 3D detection and classification** baselines (planned)
 
-The target is both a **research prototype** and a **reproducible pipeline** suitable for a 5/10 ECTS project (detection + classification).
+---
+
+## MVP Features
+
+The current MVP includes:
+
+### ✓ Data Pipeline
+- NIfTI segmentation loading
+- JPEG slice stacking into 3D volumes
+- Automatic bounding box extraction from segmentation masks
+- Data preprocessing (normalization, resampling, augmentation)
+- PyTorch Dataset and DataLoader integration
+
+### ✓ Model Architecture
+- **3D Swin Transformer backbone** with patch embedding and window attention
+- **3D DETR head** with transformer encoder-decoder
+- **Learnable pseudo-class tokens** for category conditioning
+- **Cross-modal fusion** between queries and class embeddings
+
+### ✓ Training Infrastructure
+- Hungarian matching for bipartite matching
+- Combined loss (classification CE + box L1 + GIoU)
+- AdamW optimizer with warmup + cosine annealing
+- Checkpoint saving and resuming
+- YAML-based configuration system
+
+### ✓ Evaluation & Inference
+- 3D IoU computation
+- 3D mAP calculation at multiple IoU thresholds
+- Inference script for predictions
+- Evaluation script for metric computation
+
+---
+
+## Quick Start
+
+### 1. Installation
+
+Follow the installation instructions below to set up the environment.
+
+### 2. Test the Implementation
+
+Run the test suite to verify everything works:
+
+```bash
+python test_mvp.py
+```
+
+This will test:
+- Data loading
+- Model forward pass
+- Loss computation
+- Training step
+
+### 3. Train the Model
+
+Start training with default configuration:
+
+```bash
+python train.py --config configs/default_config.yaml
+```
+
+Options:
+- `--debug`: Run for 1 epoch only (for testing)
+- `--resume <checkpoint>`: Resume from checkpoint
+- `--device <device>`: Specify device (cuda/cpu)
+
+### 4. Run Inference
+
+Predict on a single sample:
+
+```bash
+python inference.py --checkpoint checkpoints/model_best.pth --sample_idx 0
+```
+
+### 5. Evaluate Model
+
+Compute metrics on validation set:
+
+```bash
+python evaluate.py --checkpoint checkpoints/model_best.pth --data_dir ./datasets
+```
+
+### 6. Visualize Results
+
+Generate visualizations of predictions:
+
+```bash
+# Single-slice view with predictions and ground truth
+python visualize.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --show_gt
+
+# Multi-slice view (9 slices)
+python visualize.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --multi_view
+
+# Visualize during inference
+python inference.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --visualize --multi_view
+```
+
+**Visualization Options**:
+- `--show_gt`: Display ground truth boxes alongside predictions
+- `--multi_view`: Create multi-slice visualization
+- `--num_slices N`: Number of slices to show (default: 9)
+- `--axis`: View axis (axial/sagittal/coronal)
+- `--output_dir`: Directory to save visualizations
+
+**Interactive Demo**:
+```bash
+jupyter notebook demo_visualization.ipynb
+```
+
+---
+
+## Configuration
+
+Edit `configs/default_config.yaml` to customize:
+
+- **Data**: batch size, volume size, dataset path
+- **Model**: number of classes, queries, hidden dimensions, backbone architecture
+- **Training**: learning rate, epochs, warmup, loss weights
+- **Paths**: checkpoint and log directories
+
+---
+
+## Project Structure
+
+```
+3d-grounding-dino/
+├── configs/
+│   └── default_config.yaml       # Configuration file
+├── datasets/
+│   ├── rsna_dataset.py           # Dataset loader
+│   ├── preprocessing.py          # Preprocessing utilities
+│   └── __init__.py
+├── models/
+│   ├── swin3d_backbone.py        # 3D Swin Transformer
+│   ├── detr3d_head.py           # DETR detection head
+│   ├── grounding_module.py      # Pseudo-class token encoder
+│   ├── grounding_detr3d.py      # Complete model
+│   ├── losses.py                # Loss functions
+│   └── __init__.py
+├── utils/
+│   ├── metrics.py               # Evaluation metrics
+│   └── __init__.py
+├── train.py                     # Training script
+├── evaluate.py                  # Evaluation script
+├── inference.py                 # Inference script
+├── test_mvp.py                  # Test suite
+├── segmentation_analysis.py     # Data visualization tool
+└── README.md
+```
+
+---
+
+## Model Architecture
+
+The 3D Grounding-DETR consists of:
+
+1. **3D Swin Transformer Backbone**:
+   - 4-stage hierarchical feature extraction
+   - 3D window attention with shifted windows
+   - Patch merging for downsampling
+
+2. **Grounding Module**:
+   - Learnable pseudo-class token embeddings
+   - Cross-attention fusion with object queries
+
+3. **3D DETR Head**:
+   - Transformer encoder (6 layers)
+   - Transformer decoder (6 layers)
+   - 100 learnable object queries
+   - Classification head (num_classes + 1)
+   - Box regression head (6D boxes: cx, cy, cz, w, h, d)
+
+4. **Loss Functions**:
+   - Hungarian matcher for bipartite matching
+   - Classification loss (cross-entropy)
+   - Box L1 loss
+   - Box GIoU loss (3D generalized IoU)
 
 ---
 
