@@ -42,14 +42,14 @@ def box_iou_3d(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
     lt = torch.max(
         boxes1_corners[:, None, :3],
         boxes2_corners[None, :, :3]
-    )  # (N, M, 3)
+    )  # left top front (N, M, 3)
     
     rb = torch.min(
         boxes1_corners[:, None, 3:],
         boxes2_corners[None, :, 3:]
-    )  # (N, M, 3)
+    )  # right bottom back (N, M, 3)
     
-    wh = (rb - lt).clamp(min=0)  # (N, M, 3)
+    wh = (rb - lt).clamp(min=0)  # width, height, depth (N, M, 3)
     inter = wh[:, :, 0] * wh[:, :, 1] * wh[:, :, 2]  # (N, M)
     
     # Compute union
@@ -57,7 +57,7 @@ def box_iou_3d(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
     area2 = boxes2[:, 3] * boxes2[:, 4] * boxes2[:, 5]  # (M,)
     union = area1[:, None] + area2[None, :] - inter  # (N, M)
     
-    iou = inter / (union + 1e-6)
+    iou = inter / (union.clamp(min=1e-7))
     return iou
 
 
@@ -106,12 +106,25 @@ def generalized_box_iou_3d(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.
     enclosing_volume = wh[:, :, 0] * wh[:, :, 1] * wh[:, :, 2]
     
     # Compute union
-    area1 = boxes1[:, 3] * boxes1[:, 4] * boxes1[:, 5]
-    area2 = boxes2[:, 3] * boxes2[:, 4] * boxes2[:, 5]
-    union = area1[:, None] + area2[None, :] - iou * (area1[:, None] + area2[None, :] - iou)
+    area1 = boxes1[:, 3] * boxes1[:, 4] * boxes1[:, 5]  # (N,)
+    area2 = boxes2[:, 3] * boxes2[:, 4] * boxes2[:, 5]  # (M,)
     
-    # GIoU
-    giou = iou - (enclosing_volume - union) / (enclosing_volume + 1e-6)
+    # Calculate intersection (same logic as box_iou_3d)
+    lt_inter = torch.max(
+        boxes1_corners[:, None, :3],
+        boxes2_corners[None, :, :3]
+    )
+    rb_inter = torch.min(
+        boxes1_corners[:, None, 3:],
+        boxes2_corners[None, :, 3:]
+    )
+    wh_inter = (rb_inter - lt_inter).clamp(min=0)
+    inter = wh_inter[:, :, 0] * wh_inter[:, :, 1] * wh_inter[:, :, 2]
+    
+    union = area1[:, None] + area2[None, :] - inter
+    
+    # GIoU: iou - (enclosing_volume - union) / enclosing_volume
+    giou = iou - (enclosing_volume - union) / (enclosing_volume.clamp(min=1e-6))
     
     return giou
 
