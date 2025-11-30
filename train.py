@@ -10,6 +10,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 import yaml
 import argparse
 import os
+import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
@@ -118,6 +119,7 @@ def train_one_epoch(
     optimizer,
     device,
     epoch,
+    num_epochs,
     config
 ):
     """Train for one epoch."""
@@ -127,7 +129,11 @@ def train_one_epoch(
     total_loss = 0
     losses_dict = {}
     
-    pbar = tqdm(data_loader, desc=f"Epoch {epoch}")
+    # Add monitoring for predictions and gradients
+    pred_box_stats = {'min': [], 'max': [], 'mean': []}
+    grad_norms = []
+    
+    pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
     
     for batch_idx, batch in enumerate(pbar):
         # Move to device and ensure float32
@@ -137,6 +143,12 @@ def train_one_epoch(
         
         # Forward pass
         outputs = model(volumes)
+        
+        # Track prediction statistics
+        with torch.no_grad():
+            pred_box_stats['min'].append(outputs['pred_boxes'].min().item())
+            pred_box_stats['max'].append(outputs['pred_boxes'].max().item())
+            pred_box_stats['mean'].append(outputs['pred_boxes'].mean().item())
         
         # Compute loss
         losses = criterion(
@@ -151,6 +163,14 @@ def train_one_epoch(
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        
+        # Track gradient norm
+        total_norm = 0
+        for p in model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
+        grad_norms.append(total_norm)
         
         # Gradient clipping
         if config['training'].get('clip_max_norm', 0) > 0:
@@ -168,13 +188,24 @@ def train_one_epoch(
                 losses_dict[k] = 0
             losses_dict[k] += v.item()
         
-        # Update progress bar
-        pbar.set_postfix({'loss': loss.item()})
+        # Update progress bar with more info
+        pbar.set_postfix({
+            'loss': loss.item(),
+            'ce': losses.get('loss_ce', 0).item(),
+            'l1': losses.get('loss_l1', 0).item(),
+            'giou': losses.get('loss_giou', 0).item()
+        })
     
     # Average losses
     num_batches = len(data_loader)
     avg_loss = total_loss / num_batches
     avg_losses_dict = {k: v / num_batches for k, v in losses_dict.items()}
+    
+    # Add prediction and gradient statistics to output
+    avg_losses_dict['pred_box_min'] = np.mean(pred_box_stats['min'])
+    avg_losses_dict['pred_box_max'] = np.mean(pred_box_stats['max'])
+    avg_losses_dict['pred_box_mean'] = np.mean(pred_box_stats['mean'])
+    avg_losses_dict['grad_norm'] = np.mean(grad_norms)
     
     return avg_loss, avg_losses_dict
 
@@ -317,16 +348,24 @@ def main():
     num_epochs = 1 if args.debug else config['training']['epochs']
     
     for epoch in range(start_epoch, num_epochs):
-        print(f"\nEpoch {epoch+1}/{num_epochs}")
-        
         # Train
         train_loss, train_losses = train_one_epoch(
-            model, criterion, train_loader, optimizer, device, epoch, config
+            model, criterion, train_loader, optimizer, device, epoch, num_epochs, config
         )
         
+        # Print detailed statistics
         print(f"Train Loss: {train_loss:.4f}")
-        for k, v in train_losses.items():
-            print(f"  {k}: {v:.4f}")
+        print(f"  Loss Components:")
+        print(f"    loss_ce:    {train_losses.get('loss_ce', 0):.4f}")
+        print(f"    loss_l1:    {train_losses.get('loss_l1', 0):.4f}")
+        print(f"    loss_giou:  {train_losses.get('loss_giou', 0):.4f}")
+        print(f"  Prediction Stats:")
+        print(f"    box_min:    {train_losses.get('pred_box_min', 0):.4f}")
+        print(f"    box_max:    {train_losses.get('pred_box_max', 0):.4f}")
+        print(f"    box_mean:   {train_losses.get('pred_box_mean', 0):.4f}")
+        print(f"  Training Stats:")
+        print(f"    grad_norm:  {train_losses.get('grad_norm', 0):.4f}")
+        print(f"    lr:         {optimizer.param_groups[0]['lr']:.6f}")
         
         # Validate
         if val_loader and (epoch + 1) % config['training']['val_interval'] == 0:
