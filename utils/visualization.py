@@ -111,7 +111,7 @@ def draw_box_on_slice(
     slice_idx: int,
     axis: str = 'axial',
     color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-    thickness: int = 2,
+    thickness: int = 1,
     label: Optional[str] = None,
     score: Optional[float] = None
 ) -> np.ndarray:
@@ -171,25 +171,29 @@ def draw_box_on_slice(
         
         # Add text background
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.5
-        (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, 1)
+        font_scale = 0.3
+        font_thickness = 1
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
         
+        # Draw semi-transparent background
         cv2.rectangle(
             image_rgb,
-            (x_min, y_min - text_h - 4),
-            (x_min + text_w, y_min),
+            (x_min, y_min - text_h - baseline - 2),
+            (x_min + text_w + 2, y_min),
             color,
             -1  # Filled
         )
         
+        # Draw text in white for better contrast
         cv2.putText(
             image_rgb,
             text,
-            (x_min, y_min - 2),
+            (x_min + 1, y_min - baseline - 1),
             font,
             font_scale,
-            (0, 0, 0),  # Black text
-            1
+            (1.0, 1.0, 1.0),
+            font_thickness,
+            cv2.LINE_AA
         )
     
     return image_rgb
