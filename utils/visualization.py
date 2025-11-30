@@ -13,21 +13,21 @@ from pathlib import Path
 
 # Class color map (can be customized)
 CLASS_COLORS = {
-    0: (1.0, 0.0, 0.0),      # Red - background/unknown
+    0: (1.0, 0.0, 0.0),      # Red - background
     1: (0.0, 1.0, 0.0),      # Green - liver
     2: (0.0, 0.0, 1.0),      # Blue - spleen
-    3: (1.0, 1.0, 0.0),      # Yellow - kidney
-    4: (1.0, 0.0, 1.0),      # Magenta - bowel
-    5: (0.0, 1.0, 1.0),      # Cyan - other
+    3: (1.0, 1.0, 0.0),      # Yellow - LK
+    4: (1.0, 0.0, 1.0),      # Magenta - RK
+    5: (0.0, 1.0, 1.0),      # Cyan - bowel
 }
 
 CLASS_NAMES = {
     0: 'background',
     1: 'liver',
     2: 'spleen',
-    3: 'kidney',
-    4: 'bowel',
-    5: 'other'
+    3: 'LK',
+    4: 'RK',
+    5: 'bowel'
 }
 
 
