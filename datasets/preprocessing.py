@@ -148,6 +148,9 @@ def mask_to_boxes_3d(
                 d / D
             ])
             
+            # Clip to ensure valid range [0, 1]
+            box_normalized = np.clip(box_normalized, 0.0, 1.0)
+            
             boxes.append({
                 'box': box_normalized,
                 'label': int(label)
@@ -206,6 +209,10 @@ def apply_augmentation_3d(
     if intensity_jitter > 0:
         noise = np.random.normal(0, intensity_jitter, aug_volume.shape)
         aug_volume = np.clip(aug_volume + noise, 0, 1)
+    
+    # Clip all box coordinates to [0, 1] after all transformations
+    for box in aug_boxes:
+        box['box'] = np.clip(box['box'], 0.0, 1.0)
     
     return aug_volume, aug_boxes
 
