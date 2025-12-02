@@ -94,7 +94,7 @@ def box_3d_to_2d_slice(
         # View from side (x-axis)
         if not (x_min <= slice_idx <= x_max):
             return None
-        return (z_min, y_min, d, h)
+        return (y_min, z_min, h, d)
     
     elif axis == 'coronal':
         # View from front (y-axis)

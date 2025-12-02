@@ -87,6 +87,15 @@ class RSNAVolumeDataset(Dataset):
         seg_path = os.path.join(self.segmentation_dir, seg_file)
         seg_nib = nib.load(seg_path)
         seg_data = seg_nib.get_fdata()
+
+        # 1. Rotate segmentation to match image orientation
+        seg_data = np.rot90(seg_data, k=1)
+        
+        # 2. Flip depth dimension
+        seg_data = seg_data[:, :, ::-1]
+
+        # 3. Transpose from (H, W, D) to (D, H, W)
+        seg_data = np.transpose(seg_data, (2, 0, 1))
         
         # Get study ID from filename (assuming format: study_id.nii)
         study_id = seg_file.replace('.nii.gz', '').replace('.nii', '')
@@ -114,8 +123,9 @@ class RSNAVolumeDataset(Dataset):
             # Load JPEG slices
             jpeg_files = sorted([
                 f for f in os.listdir(image_study_dir)
-                if f.endswith('.jpeg') or f.endswith('.jpg')
-            ])
+                if f.endswith('.jpeg') or f.endswith('.jpg')],
+                key=lambda f: int(f.replace('.jpeg', ''))
+            )
             
             if len(jpeg_files) == 0:
                 volume = np.zeros(seg_data.shape, dtype=np.float32)
@@ -134,13 +144,6 @@ class RSNAVolumeDataset(Dataset):
                 
                 # Stack into volume
                 volume = np.stack(images, axis=0)  # (D, H, W)
-                
-                # Align with segmentation if needed
-                volume = volume[::-1]
-        
-        # Rotate segmentation to match image orientation
-        seg_data = np.rot90(seg_data, k=1, axes=(0, 1))
-        
         return volume, seg_data
     
     def __getitem__(self, idx: int) -> Dict:
