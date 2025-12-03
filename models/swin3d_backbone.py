@@ -43,7 +43,16 @@ class PatchEmbed3D(nn.Module):
 
 
 class WindowAttention3D(nn.Module):
-    """3D window-based multi-head self-attention."""
+    """
+    3D window-based multi-head self-attention.
+    
+    TODO: This is currently implementing FULL ATTENTION (MVP implementation).
+    The actual window-based attention mechanism will be added in the future.
+    True window attention should:
+    1. Partition input into non-overlapping 3D windows
+    2. Apply attention within each window separately
+    3. Support shifted window partitioning for cross-window connections
+    """
     
     def __init__(
         self,
@@ -72,6 +81,9 @@ class WindowAttention3D(nn.Module):
             x: (B, D*H*W, C)
         Returns:
             (B, D*H*W, C)
+        
+        TODO: Currently this performs full attention over all tokens.
+        Should implement window partitioning for efficient local attention.
         """
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
