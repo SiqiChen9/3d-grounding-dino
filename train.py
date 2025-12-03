@@ -16,6 +16,7 @@ from pathlib import Path
 
 from datasets import RSNAVolumeDataset, collate_fn
 from models import build_model
+from models.sanity_check_model import build_sanity_check_model
 from models.losses import HungarianMatcher, SetCriterion
 
 
@@ -278,6 +279,8 @@ def main():
                        help='Device to use')
     parser.add_argument('--debug', action='store_true',
                        help='Debug mode (single batch)')
+    parser.add_argument('--sanity-check', action='store_true',
+                       help='Use large FC network for sanity check (overfitting test)')
     
     args = parser.parse_args()
     
@@ -299,7 +302,13 @@ def main():
     
     # Create model
     print("\nBuilding model...")
-    model = build_model(config)
+    if args.sanity_check:
+        print("⚠️  SANITY CHECK MODE: Using large FC network for overfitting test")
+        print("   This model should easily overfit training data.")
+        print("   If loss doesn't drop, there's an issue with the training pipeline.")
+        model = build_sanity_check_model(config)
+    else:
+        model = build_model(config)
     model = model.to(device)
     
     # Create criterion
