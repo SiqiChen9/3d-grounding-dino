@@ -1,24 +1,62 @@
 """
 Complete 3D Grounding-DETR model.
-Integrates Swin3D backbone, grounding module, and DETR head.
+Integrates all components following the architecture diagram.
 """
 import torch
 import torch.nn as nn
-from typing import Tuple, Dict
+from typing import Dict
 
 from .swin3d_backbone import SwinTransformer3D
-from .detr3d_head import DETR3DHead
-from .grounding_module import GroundingModule
+from .text_feature_generator import PseudoTextFeatureGenerator
+from .feature_enhancer import FeatureEnhancer
+from .query_selection import LanguageGuidedQuerySelection
+from .cross_modality_decoder import CrossModalityDecoder
 
 
 class GroundingDETR3D(nn.Module):
     """
     3D Grounding-DETR for CT volume detection.
     
-    Architecture:
-        1. Swin3D backbone extracts features
-        2. Grounding module generates class tokens
-        3. DETR head predicts boxes and classes
+    Architecture (following diagram):
+    ┌─────────────────────────────────────────────────────┐
+    │ 1. Model Overall                                    │
+    │    ┌─────────────┐         ┌──────────────────┐     │
+    │    │ Image       │         │ Pseudo Text      │     │
+    │    │ Backbone    │         │ Feature Gen      │     │
+    │    │ (Swin3D)    │         │                  │     │
+    │    └──────┬──────┘         └────────┬─────────┘     │
+    │           │                         │               │
+    │           │ Vanilla Features        │               │
+    │           ▼                         ▼               │
+    │    ┌──────────────────────────────────────────┐     │
+    │    │ 2. Feature Enhancer (TODO)               │     │
+    │    │    - Bidirectional cross-attention       │     │
+    │    └──────┬───────────────────────┬───────────┘     │
+    │           │                       │                 │
+    │           │ Enhanced Features     │                 │
+    │           ▼                       │                 │
+    │    ┌──────────────┐               │                 │
+    │    │ Language-    │◀──────────────┘                 │
+    │    │ guided Query │                                 │
+    │    │ Selection    │                                 │
+    │    └──────┬───────┘                                 │
+    │           │ Selected Queries                        │
+    │           ▼                                         │
+    │    ┌─────────────────────────────────────────┐      │
+    │    │ 3. Cross-Modality Decoder               │      │
+    │    │    - Self-Attention                     │      │
+    │    │    - Text Cross-Attention               │      │
+    │    │    - Image Cross-Attention              │      │
+    │    │    - FFN                                │      │
+    │    └──────┬──────────────────────────────────┘      │
+    │           │                                         │
+    │           ▼                                         │
+    │    ┌─────────────────┐                              │
+    │    │ Prediction Heads│                              │
+    │    │ - Class         │                              │
+    │    │ - BBox          │                              │
+    │    └─────────────────┘                              │
+    └─────────────────────────────────────────────────────┘
     """
     
     def __init__(
@@ -28,28 +66,35 @@ class GroundingDETR3D(nn.Module):
         hidden_dim: int = 256,
         # Backbone parameters
         backbone_embed_dim: int = 96,
-        backbone_depths: list = [2, 2, 6, 2],
-        backbone_num_heads: list = [3, 6, 12, 24],
-        # DETR parameters
+        backbone_depths: list = None,
+        backbone_num_heads: list = None,
+        # Decoder parameters
         num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
         num_heads: int = 8,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
-        # Grounding parameters
-        use_grounding: bool = True
+        # Text feature parameters
+        trainable_pseudo_features: bool = True
     ):
         super().__init__()
+        
+        if backbone_depths is None:
+            backbone_depths = [2, 2, 6, 2]
+        if backbone_num_heads is None:
+            backbone_num_heads = [3, 6, 12, 24]
+        
         self.num_classes = num_classes
         self.num_queries = num_queries
         self.hidden_dim = hidden_dim
-        self.use_grounding = use_grounding
         
         # Compute backbone output dimension
         backbone_dim = int(backbone_embed_dim * 2 ** (len(backbone_depths) - 1))
         
-        # Backbone: Swin3D
-        self.backbone = SwinTransformer3D(
+        # ═══════════════════════════════════════════════════════
+        # Component 1: Image Backbone (Swin3D)
+        # ═══════════════════════════════════════════════════════
+        self.image_backbone = SwinTransformer3D(
             in_channels=1,
             patch_size=(4, 4, 4),
             embed_dim=backbone_embed_dim,
@@ -62,20 +107,38 @@ class GroundingDETR3D(nn.Module):
             attn_drop_rate=dropout
         )
         
-        # Grounding module (optional)
-        if use_grounding:
-            self.grounding_module = GroundingModule(
-                num_classes=num_classes,
-                hidden_dim=hidden_dim,
-                num_heads=num_heads,
-                dropout=dropout,
-                use_fusion=True
-            )
-        else:
-            self.grounding_module = None
+        # ═══════════════════════════════════════════════════════
+        # Component 2: Pseudo Text Feature Generator
+        # ═══════════════════════════════════════════════════════
+        self.text_feature_generator = PseudoTextFeatureGenerator(
+            num_classes=num_classes,
+            hidden_dim=hidden_dim,
+            trainable_pseudo_features=trainable_pseudo_features
+        )
         
-        # Detection head: DETR3D
-        self.detr_head = DETR3DHead(
+        # ═══════════════════════════════════════════════════════
+        # Component 3: Feature Enhancer (Placeholder)
+        # ═══════════════════════════════════════════════════════
+        self.feature_enhancer = FeatureEnhancer(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            num_layers=1
+        )
+        
+        # ═══════════════════════════════════════════════════════
+        # Component 4: Language-guided Query Selection (Placeholder)
+        # ═══════════════════════════════════════════════════════
+        self.query_selection = LanguageGuidedQuerySelection(
+            num_queries=num_queries,
+            hidden_dim=hidden_dim,
+            num_classes=num_classes
+        )
+        
+        # ═══════════════════════════════════════════════════════
+        # Component 5: Cross-Modality Decoder
+        # ═══════════════════════════════════════════════════════
+        self.decoder = CrossModalityDecoder(
             hidden_dim=hidden_dim,
             num_queries=num_queries,
             num_classes=num_classes,
@@ -84,13 +147,12 @@ class GroundingDETR3D(nn.Module):
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            backbone_dim=backbone_dim,
-            use_grounding_fusion=use_grounding  # Enable fusion if grounding is enabled
+            backbone_dim=backbone_dim
         )
     
     def forward(self, volumes: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
-        Forward pass.
+        Forward pass through the complete architecture.
         
         Args:
             volumes: (B, 1, D, H, W) - CT volumes
@@ -99,32 +161,76 @@ class GroundingDETR3D(nn.Module):
             dict with:
                 - 'pred_logits': (B, num_queries, num_classes+1)
                 - 'pred_boxes': (B, num_queries, 6)
-                - 'class_tokens': (B, num_classes, hidden_dim) if grounding enabled
+                - 'vanilla_text_features': (B, num_classes, hidden_dim)
+                - 'vanilla_image_features': (B, D', H', W', C)
         """
         B = volumes.shape[0]
         
-        # Extract features with backbone
-        features = self.backbone(volumes)  # (B, D', H', W', C)
+        # ═══════════════════════════════════════════════════════
+        # Step 1: Extract vanilla features from both modalities
+        # ═══════════════════════════════════════════════════════
         
-        # Reshape features for DETR head
-        features = features.permute(0, 4, 1, 2, 3)  # (B, C, D', H', W')
+        # Image features from backbone
+        vanilla_image_features = self.image_backbone(volumes)  # (B, D', H', W', C)
         
-        # Generate class tokens if grounding is enabled
-        class_tokens = None
-        if self.grounding_module is not None:
-            class_tokens = self.grounding_module(B)  # (B, num_classes, hidden_dim)
+        # Text features from pseudo generator
+        vanilla_text_features = self.text_feature_generator(B)  # (B, num_classes, hidden_dim)
         
-        # Get predictions (pass class_tokens for fusion)
-        pred_logits, pred_boxes = self.detr_head(features, class_tokens)
+        # ═══════════════════════════════════════════════════════
+        # Step 2: Enhance features through bidirectional cross-attention
+        # (Currently a placeholder - just passes through)
+        # ═══════════════════════════════════════════════════════
         
-        # Build outputs
+        # Reshape image features for enhancer
+        # (B, D', H', W', C) -> (B, C, D', H', W')
+        image_features_permuted = vanilla_image_features.permute(0, 4, 1, 2, 3)
+        D, H, W, C = vanilla_image_features.shape[1:]
+        
+        # Flatten for feature enhancer input
+        # (B, C, D', H', W') -> (D'*H'*W', B, C)
+        image_features_flat = image_features_permuted.flatten(2).permute(2, 0, 1)
+        
+        # Enhance (currently identity operation)
+        enhanced_text_features, enhanced_image_features = self.feature_enhancer(
+            vanilla_text_features,
+            image_features_flat
+        )
+        
+        # ═══════════════════════════════════════════════════════
+        # Step 3: Language-guided query selection
+        # (Currently a placeholder - generates fixed learnable queries)
+        # ═══════════════════════════════════════════════════════
+        
+        selected_queries = self.query_selection(
+            enhanced_text_features,
+            B
+        )  # (num_queries, B, hidden_dim)
+        
+        # ═══════════════════════════════════════════════════════
+        # Step 4: Cross-modality decoding
+        # ═══════════════════════════════════════════════════════
+        
+        # Reshape enhanced image features back to 5D
+        # (D'*H'*W', B, C) -> (B, C, D', H', W')
+        enhanced_image_features_5d = enhanced_image_features.permute(1, 2, 0)  # (B, C, D'*H'*W')
+        enhanced_image_features_5d = enhanced_image_features_5d.view(B, -1, D, H, W)
+        
+        pred_logits, pred_boxes = self.decoder(
+            enhanced_image_features_5d,  # (B, C, D', H', W')
+            enhanced_text_features,       # (B, num_classes, hidden_dim)
+            selected_queries              # (num_queries, B, hidden_dim)
+        )
+        
+        # ═══════════════════════════════════════════════════════
+        # Step 5: Return predictions and intermediate features
+        # ═══════════════════════════════════════════════════════
+        
         outputs = {
             'pred_logits': pred_logits,
-            'pred_boxes': pred_boxes
+            'pred_boxes': pred_boxes,
+            'vanilla_text_features': vanilla_text_features,
+            'vanilla_image_features': vanilla_image_features
         }
-        
-        if class_tokens is not None:
-            outputs['class_tokens'] = class_tokens
         
         return outputs
     
@@ -157,7 +263,7 @@ def build_model(config: dict) -> GroundingDETR3D:
         num_heads=model_config.get('num_heads', 8),
         dim_feedforward=model_config.get('dim_feedforward', 2048),
         dropout=model_config.get('dropout', 0.1),
-        use_grounding=model_config.get('use_grounding', True)
+        trainable_pseudo_features=model_config.get('trainable_pseudo_features', True)
     )
     
     print(f"Model built with {model.get_num_params():,} parameters")
