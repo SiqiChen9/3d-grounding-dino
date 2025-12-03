@@ -34,10 +34,10 @@ class PatchEmbed3D(nn.Module):
         Args:
             x: (B, C, D, H, W)
         Returns:
-            (B, D', H', W', C)
+            (B, D', H', W', embed_dim)
         """
-        x = self.proj(x)  # (B, C, D', H', W')
-        x = x.permute(0, 2, 3, 4, 1)  # (B, D', H', W', C)
+        x = self.proj(x)  # (B, embed_dim, D', H', W')
+        x = x.permute(0, 2, 3, 4, 1)  # (B, D', H', W', embed_dim)
         x = self.norm(x)
         return x
 
