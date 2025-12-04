@@ -9,6 +9,7 @@ from matplotlib.gridspec import GridSpec
 from typing import List, Tuple, Optional, Dict
 import cv2
 from pathlib import Path
+from scipy import ndimage
 
 
 # Class color map (can be customized)
@@ -29,6 +30,41 @@ CLASS_NAMES = {
     4: 'RK',
     5: 'bowel'
 }
+
+
+def resize_volume(
+    volume: np.ndarray,
+    target_size: int = 512
+) -> Tuple[np.ndarray, Tuple[float, float, float]]:
+    """
+    Resize volume to have H and W dimensions equal to target_size,
+    and resize D proportionally.
+    
+    Args:
+        volume: Input volume (D, H, W)
+        target_size: Target size for H and W dimensions
+    
+    Returns:
+        Resized volume and scaling factors (scale_d, scale_h, scale_w)
+    """
+    D, H, W = volume.shape
+    
+    # Calculate scaling factors
+    scale_h = target_size / H
+    scale_w = target_size / W
+    # Use the same scale for D to maintain aspect ratio
+    scale_d = (scale_h + scale_w) / 2
+    
+    # Calculate new shape
+    new_D = int(D * scale_d)
+    new_H = target_size
+    new_W = target_size
+    
+    # Resize using scipy's zoom (high-quality interpolation)
+    resized_volume = ndimage.zoom(volume, (scale_d, scale_h, scale_w), order=1)
+    
+    return resized_volume, (scale_d, scale_h, scale_w)
+
 
 
 def denormalize_box_3d(
@@ -199,6 +235,61 @@ def draw_box_on_slice(
     return image_rgb
 
 
+def draw_dashed_box_on_ax(
+    ax: plt.Axes,
+    box_3d: np.ndarray,
+    slice_idx: int,
+    axis: str = 'axial',
+    color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+    linewidth: float = 2,
+    linestyle: str = '--',
+    label: Optional[str] = None
+):
+    """
+    Draw 3D bounding box on matplotlib axis with customizable line style.
+    
+    Args:
+        ax: Matplotlib axis
+        box_3d: Absolute 3D box (cx, cy, cz, w, h, d)
+        slice_idx: Current slice index
+        axis: View axis
+        color: Box color (R, G, B) in [0, 1]
+        linewidth: Line width
+        linestyle: Line style ('-' for solid, '--' for dashed)
+        label: Optional label text
+    """
+    # Get 2D box projection
+    box_2d = box_3d_to_2d_slice(box_3d, slice_idx, axis)
+    if box_2d is None:
+        return
+    
+    x_min, y_min, width, height = box_2d
+    
+    # Create rectangle patch
+    rect = patches.Rectangle(
+        (x_min, y_min),
+        width,
+        height,
+        linewidth=linewidth,
+        edgecolor=color,
+        facecolor='none',
+        linestyle=linestyle
+    )
+    ax.add_patch(rect)
+    
+    # Add label if provided
+    if label is not None:
+        ax.text(
+            x_min,
+            y_min - 5,
+            label,
+            color=color,
+            fontsize=8,
+            weight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.5)
+        )
+
+
 def visualize_single_slice(
     volume: np.ndarray,
     slice_idx: int,
@@ -213,6 +304,7 @@ def visualize_single_slice(
 ) -> plt.Figure:
     """
     Visualize predictions and ground truth on a single slice.
+    Volume is resized to 512x512 (H, W) with proportional D scaling.
     
     Args:
         volume: 3D volume (D, H, W)
@@ -229,15 +321,30 @@ def visualize_single_slice(
     Returns:
         Matplotlib figure
     """
-    # Extract slice
+    # Resize volume to 512x512
+    resized_volume, scale_factors = resize_volume(volume, target_size=512)
+    scale_d, scale_h, scale_w = scale_factors
+    
+    # Adjust slice_idx based on scaling
     if axis == 'axial':
-        slice_img = volume[slice_idx, :, :]
+        adjusted_slice_idx = int(slice_idx * scale_d)
+        adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[0] - 1)
     elif axis == 'sagittal':
-        slice_img = volume[:, :, slice_idx]
+        adjusted_slice_idx = int(slice_idx * scale_w)
+        adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[2] - 1)
     elif axis == 'coronal':
-        slice_img = volume[:, slice_idx, :]
+        adjusted_slice_idx = int(slice_idx * scale_h)
+        adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[1] - 1)
     else:
         raise ValueError(f"Unknown axis: {axis}")
+    
+    # Extract slice
+    if axis == 'axial':
+        slice_img = resized_volume[adjusted_slice_idx, :, :]
+    elif axis == 'sagittal':
+        slice_img = resized_volume[:, :, adjusted_slice_idx]
+    elif axis == 'coronal':
+        slice_img = resized_volume[:, adjusted_slice_idx, :]
     
     # Normalize to [0, 1]
     slice_img = (slice_img - slice_img.min()) / (slice_img.max() - slice_img.min() + 1e-8)
@@ -252,14 +359,14 @@ def visualize_single_slice(
         ax_gt = None
     
     # Draw predictions
-    img_with_pred = slice_img.copy()
+    ax_pred.imshow(slice_img, cmap='gray')
     if pred_boxes is not None and len(pred_boxes) > 0:
         for i, box in enumerate(pred_boxes):
             if pred_scores is not None and pred_scores[i] < score_threshold:
                 continue
             
-            # Denormalize box
-            box_abs = denormalize_box_3d(box, volume.shape)
+            # Denormalize box (using RESIZED volume shape)
+            box_abs = denormalize_box_3d(box, resized_volume.shape)
             
             # Get color and label
             label_idx = pred_labels[i] if pred_labels is not None else 0
@@ -267,42 +374,48 @@ def visualize_single_slice(
             label_name = CLASS_NAMES.get(label_idx, f'class_{label_idx}')
             score = pred_scores[i] if pred_scores is not None else None
             
-            # Draw box
-            img_with_pred = draw_box_on_slice(
-                img_with_pred, box_abs, slice_idx, axis,
-                color=color, thickness=2,
-                label=label_name, score=score
+            # Add score to label if available
+            if score is not None:
+                label_text = f'{label_name} {score:.2f}'
+            else:
+                label_text = label_name
+            
+            # Draw box with solid line
+            draw_dashed_box_on_ax(
+                ax_pred, box_abs, adjusted_slice_idx, axis,
+                color=color, linewidth=2, linestyle='-',
+                label=label_text
             )
     
-    ax_pred.imshow(img_with_pred, cmap='gray' if len(img_with_pred.shape) == 2 else None)
     ax_pred.set_title(f'Predictions - {axis.capitalize()} Slice {slice_idx}')
     ax_pred.axis('off')
     
     # Draw ground truth
     if ax_gt is not None:
-        img_with_gt = slice_img.copy()
+        ax_gt.imshow(slice_img, cmap='gray')
         if gt_boxes is not None and len(gt_boxes) > 0:
             for i, box in enumerate(gt_boxes):
-                # Denormalize box
-                box_abs = denormalize_box_3d(box, volume.shape)
+                # Denormalize box (using RESIZED volume shape)
+                box_abs = denormalize_box_3d(box, resized_volume.shape)
                 
                 # Get color and label
                 label_idx = gt_labels[i] if gt_labels is not None else 0
                 color = CLASS_COLORS.get(label_idx, (1.0, 1.0, 1.0))
                 label_name = CLASS_NAMES.get(label_idx, f'class_{label_idx}')
                 
-                # Draw box
-                img_with_gt = draw_box_on_slice(
-                    img_with_gt, box_abs, slice_idx, axis,
-                    color=color, thickness=2, label=label_name
+                # Draw box with DASHED line
+                draw_dashed_box_on_ax(
+                    ax_gt, box_abs, adjusted_slice_idx, axis,
+                    color=color, linewidth=2, linestyle='--',
+                    label=label_name
                 )
         
-        ax_gt.imshow(img_with_gt, cmap='gray' if len(img_with_gt.shape) == 2 else None)
         ax_gt.set_title(f'Ground Truth - {axis.capitalize()} Slice {slice_idx}')
         ax_gt.axis('off')
     
     plt.tight_layout()
     return fig
+
 
 
 def visualize_multi_slice(
@@ -319,6 +432,7 @@ def visualize_multi_slice(
 ) -> plt.Figure:
     """
     Visualize predictions across multiple evenly-spaced slices.
+    Volume is resized to 512x512 (H, W) with proportional D scaling.
     
     Args:
         volume: 3D volume (D, H, W)
@@ -335,7 +449,11 @@ def visualize_multi_slice(
     Returns:
         Matplotlib figure
     """
-    # Determine slice indices
+    # Resize volume to 512x512
+    resized_volume, scale_factors = resize_volume(volume, target_size=512)
+    scale_d, scale_h, scale_w = scale_factors
+    
+    # Determine slice indices in ORIGINAL volume
     if axis == 'axial':
         depth = volume.shape[0]
     elif axis == 'sagittal':
@@ -348,8 +466,8 @@ def visualize_multi_slice(
     slice_indices = np.linspace(0, depth - 1, num_slices, dtype=int)
     
     # Create grid
-    rows = int(np.ceil(np.sqrt(num_slices)))
-    cols = int(np.ceil(num_slices / rows))
+    cols = int(np.ceil(np.sqrt(num_slices)))
+    rows = int(np.ceil(num_slices / cols))
     
     fig, axes = plt.subplots(rows, cols, figsize=figsize)
     axes = axes.flatten() if num_slices > 1 else [axes]
@@ -357,49 +475,59 @@ def visualize_multi_slice(
     for idx, slice_idx in enumerate(slice_indices):
         ax = axes[idx]
         
-        # Extract slice
+        # Adjust slice_idx based on scaling
         if axis == 'axial':
-            slice_img = volume[slice_idx, :, :]
+            adjusted_slice_idx = int(slice_idx * scale_d)
+            adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[0] - 1)
         elif axis == 'sagittal':
-            slice_img = volume[:, :, slice_idx]
+            adjusted_slice_idx = int(slice_idx * scale_w)
+            adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[2] - 1)
+        elif axis == 'coronal':
+            adjusted_slice_idx = int(slice_idx * scale_h)
+            adjusted_slice_idx = min(adjusted_slice_idx, resized_volume.shape[1] - 1)
+        
+        # Extract slice from RESIZED volume
+        if axis == 'axial':
+            slice_img = resized_volume[adjusted_slice_idx, :, :]
+        elif axis == 'sagittal':
+            slice_img = resized_volume[:, :, adjusted_slice_idx]
         else:  # coronal
-            slice_img = volume[:, slice_idx, :]
+            slice_img = resized_volume[:, adjusted_slice_idx, :]
         
         # Normalize
         slice_img = (slice_img - slice_img.min()) / (slice_img.max() - slice_img.min() + 1e-8)
         
-        # Draw predictions
-        img_with_boxes = slice_img.copy()
+        # Display image
+        ax.imshow(slice_img, cmap='gray')
         
+        # Draw predictions with SOLID lines
         if pred_boxes is not None and len(pred_boxes) > 0:
             for i, box in enumerate(pred_boxes):
                 if pred_scores is not None and pred_scores[i] < score_threshold:
                     continue
                 
-                box_abs = denormalize_box_3d(box, volume.shape)
+                box_abs = denormalize_box_3d(box, resized_volume.shape)
                 label_idx = pred_labels[i] if pred_labels is not None else 0
                 color = CLASS_COLORS.get(label_idx, (1.0, 1.0, 1.0))
                 
-                img_with_boxes = draw_box_on_slice(
-                    img_with_boxes, box_abs, slice_idx, axis,
-                    color=color, thickness=1
+                draw_dashed_box_on_ax(
+                    ax, box_abs, adjusted_slice_idx, axis,
+                    color=color, linewidth=1.5, linestyle='-'
                 )
         
-        # Draw ground truth (dashed lines)
+        # Draw ground truth with DASHED lines
         if gt_boxes is not None and len(gt_boxes) > 0:
             for i, box in enumerate(gt_boxes):
-                box_abs = denormalize_box_3d(box, volume.shape)
+                box_abs = denormalize_box_3d(box, resized_volume.shape)
                 label_idx = gt_labels[i] if gt_labels is not None else 0
                 color = CLASS_COLORS.get(label_idx, (1.0, 1.0, 1.0))
                 
-                # Use thinner lines for GT
-                img_with_boxes = draw_box_on_slice(
-                    img_with_boxes, box_abs, slice_idx, axis,
-                    color=tuple(c * 0.7 for c in color),  # Darker for GT
-                    thickness=1
+                # Draw GT with dashed line
+                draw_dashed_box_on_ax(
+                    ax, box_abs, adjusted_slice_idx, axis,
+                    color=color, linewidth=1.5, linestyle='--'
                 )
         
-        ax.imshow(img_with_boxes, cmap='gray' if len(img_with_boxes.shape) == 2 else None)
         ax.set_title(f'{axis.capitalize()} {slice_idx}')
         ax.axis('off')
     
@@ -410,6 +538,7 @@ def visualize_multi_slice(
     plt.suptitle(f'Multi-Slice View ({axis.capitalize()})', fontsize=16, y=0.98)
     plt.tight_layout()
     return fig
+
 
 
 def save_visualization(
