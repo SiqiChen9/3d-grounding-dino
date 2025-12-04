@@ -28,48 +28,6 @@ class PositionalEncoding3D(nn.Module):
         return x + self.pos_embed[:, :N, :]
 
 
-class TransformerEncoderLayer(nn.Module):
-    """Standard Transformer encoder layer with self-attention and FFN."""
-    
-    def __init__(
-        self,
-        d_model: int = 256,
-        num_heads: int = 8,
-        dim_feedforward: int = 2048,
-        dropout: float = 0.1
-    ):
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, num_heads, dropout=dropout)
-        
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-    
-    def forward(self, src: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            src: (N, B, C)
-        Returns:
-            (N, B, C)
-        """
-        # Self-attention
-        src2 = self.self_attn(src, src, src)[0]
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
-        
-        # FFN
-        src2 = self.linear2(self.dropout(F.relu(self.linear1(src))))
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
-        
-        return src
-
-
 class CrossModalityDecoderLayer(nn.Module):
     """
     Cross-Modality Decoder Layer as shown in the architecture diagram.
@@ -211,15 +169,16 @@ class CrossModalityDecoder(nn.Module):
     """
     Cross-Modality Decoder for 3D object detection.
     
-    This replaces the DETR3DHead with a decoder that has separate
-    cross-attention modules for text and image features, as shown
-    in the architecture diagram.
+    This decoder receives enhanced features from FeatureEnhancer and performs
+    cross-attention between queries and both text/image modalities.
     
     Components:
-        1. Image feature encoder (from backbone features)
-        2. Stack of CrossModalityDecoderLayer
-        3. Classification head
-        4. Bounding box regression head
+        1. Stack of CrossModalityDecoderLayer
+        2. Classification head
+        3. Bounding box regression head
+    
+    Note: Image preprocessing (projection, encoding) is handled by FeatureEnhancer,
+          so this decoder works directly with enhanced features.
     """
     
     def __init__(
@@ -227,29 +186,15 @@ class CrossModalityDecoder(nn.Module):
         hidden_dim: int = 256,
         num_queries: int = 100,
         num_classes: int = 5,
-        num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
         num_heads: int = 8,
         dim_feedforward: int = 2048,
-        dropout: float = 0.1,
-        backbone_dim: int = 768  # Output dim from Swin3D
+        dropout: float = 0.1
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_queries = num_queries
         self.num_classes = num_classes
-        
-        # Project backbone features to hidden dimension
-        self.input_proj = nn.Conv3d(backbone_dim, hidden_dim, kernel_size=1)
-        
-        # Positional encoding for image features
-        self.pos_encoding = PositionalEncoding3D(hidden_dim)
-        
-        # Image feature encoder (standard transformer encoder)
-        self.encoder_layers = nn.ModuleList([
-            TransformerEncoderLayer(hidden_dim, num_heads, dim_feedforward, dropout)
-            for _ in range(num_encoder_layers)
-        ])
         
         # Cross-modality decoder layers
         self.decoder_layers = nn.ModuleList([
@@ -271,7 +216,7 @@ class CrossModalityDecoder(nn.Module):
         Forward pass through the cross-modality decoder.
         
         Args:
-            image_features: (B, C, D, H, W) - features from image backbone
+            image_features: (N, B, hidden_dim) - enhanced image features (flattened spatial)
             text_features: (B, num_classes, hidden_dim) - enhanced text features
             queries: (num_queries, B, hidden_dim) - object queries from query selection
         
@@ -279,36 +224,17 @@ class CrossModalityDecoder(nn.Module):
             pred_logits: (B, num_queries, num_classes+1) - classification scores
             pred_boxes: (B, num_queries, 6) - bounding box predictions (normalized)
         """
-        B = image_features.shape[0]
-        
-        # 1. Project image features to hidden dimension
-        image_features = self.input_proj(image_features)  # (B, hidden_dim, D, H, W)
-        
-        # 2. Flatten spatial dimensions
-        D, H, W = image_features.shape[2:]
-        image_features_flat = image_features.flatten(2).permute(2, 0, 1)  # (D*H*W, B, hidden_dim)
-        
-        # 3. Add positional encoding
-        image_features_flat = image_features_flat.permute(1, 0, 2)  # (B, D*H*W, hidden_dim)
-        image_features_flat = self.pos_encoding(image_features_flat)
-        image_features_flat = image_features_flat.permute(1, 0, 2)  # (D*H*W, B, hidden_dim)
-        
-        # 4. Encode image features
-        memory = image_features_flat
-        for layer in self.encoder_layers:
-            memory = layer(memory)
-        # memory: (D*H*W, B, hidden_dim)
-        
-        # 5. Prepare text features for cross-attention
+        # Prepare text features for cross-attention
         # Convert from (B, num_classes, hidden_dim) to (num_classes, B, hidden_dim)
         text_features_t = text_features.permute(1, 0, 2)
         
-        # 6. Decode with cross-modality attention
+        # Decode with cross-modality attention
+        # image_features is already in shape (N, B, hidden_dim) from FeatureEnhancer
         tgt = queries  # (num_queries, B, hidden_dim)
         for layer in self.decoder_layers:
-            tgt = layer(tgt, text_features_t, memory)
+            tgt = layer(tgt, text_features_t, image_features)
         
-        # 7. Generate predictions
+        # Generate predictions
         tgt = tgt.permute(1, 0, 2)  # (B, num_queries, hidden_dim)
         pred_logits = self.class_embed(tgt)  # (B, num_queries, num_classes+1)
         pred_boxes = self.bbox_embed(tgt).sigmoid()  # (B, num_queries, 6), normalized to [0,1]

@@ -37,7 +37,7 @@ class FeatureEnhancer(nn.Module):
     └─────────────────────────────────────────────────────┘
     
     Current Implementation:
-        - Identity pass-through (returns inputs unchanged)
+        - Simple encoder pass-through
         - Maintains correct tensor shapes for integration
     
     Future Enhancements:
@@ -66,7 +66,17 @@ class FeatureEnhancer(nn.Module):
         self.num_heads = num_heads
         self.dropout = dropout
         self.num_layers = num_layers
-        
+
+        # Image encoder: self-attention + FFN for image features
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=False  # Input shape: (N, B, C)
+        )
+        self.image_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
         # TODO: Add actual layers when implementing
         # self.text_to_image_attn = nn.MultiheadAttention(...)
         # self.image_to_text_attn = nn.MultiheadAttention(...)
@@ -91,15 +101,17 @@ class FeatureEnhancer(nn.Module):
             enhanced_text_features: (B, num_classes, hidden_dim)
             enhanced_image_features: (N, B, hidden_dim)
         
-        TODO: Replace identity pass-through with actual enhancement logic:
+        TODO: Replace simple encoder pass-through with actual enhancement logic:
             1. Self-Attention for both modalities
             2. Image-to-Text Cross-Attention
             3. Text-to-Image Cross-Attention
             4. Feed-Forward Networks
             5. Residual connections and layer normalization (optional)
         """
-        # PLACEHOLDER: Currently just returns inputs unchanged
+        # Encode image features with self-attention + FFN
+        enhanced_image_features = self.image_encoder(image_features)
+
+        # Text features pass through unchanged (learnable embeddings)
         enhanced_text_features = text_features
-        enhanced_image_features = image_features
-        
+
         return enhanced_text_features, enhanced_image_features

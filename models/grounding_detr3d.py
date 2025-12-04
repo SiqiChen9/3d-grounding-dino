@@ -104,7 +104,8 @@ class GroundingDETR3D(nn.Module):
             mlp_ratio=4.0,
             qkv_bias=True,
             drop_rate=dropout,
-            attn_drop_rate=dropout
+            attn_drop_rate=dropout,
+            out_channels=hidden_dim  # Project from 768 to hidden_dim (256)
         )
         
         # ═══════════════════════════════════════════════════════
@@ -132,7 +133,8 @@ class GroundingDETR3D(nn.Module):
         self.query_selection = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            num_classes=num_classes
+            num_classes=num_classes,
+            image_feature_dim=hidden_dim  # Backbone output is already projected to hidden_dim
         )
         
         # ═══════════════════════════════════════════════════════
@@ -142,12 +144,10 @@ class GroundingDETR3D(nn.Module):
             hidden_dim=hidden_dim,
             num_queries=num_queries,
             num_classes=num_classes,
-            num_encoder_layers=num_encoder_layers,
             num_decoder_layers=num_decoder_layers,
             num_heads=num_heads,
             dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            backbone_dim=backbone_dim
+            dropout=dropout
         )
     
     def forward(self, volumes: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -203,6 +203,7 @@ class GroundingDETR3D(nn.Module):
         
         selected_queries = self.query_selection(
             enhanced_text_features,
+            enhanced_image_features,
             B
         )  # (num_queries, B, hidden_dim)
         
@@ -210,15 +211,10 @@ class GroundingDETR3D(nn.Module):
         # Step 4: Cross-modality decoding
         # ═══════════════════════════════════════════════════════
         
-        # Reshape enhanced image features back to 5D
-        # (D'*H'*W', B, C) -> (B, C, D', H', W')
-        enhanced_image_features_5d = enhanced_image_features.permute(1, 2, 0)  # (B, C, D'*H'*W')
-        enhanced_image_features_5d = enhanced_image_features_5d.view(B, -1, D, H, W)
-        
         pred_logits, pred_boxes = self.decoder(
-            enhanced_image_features_5d,  # (B, C, D', H', W')
-            enhanced_text_features,       # (B, num_classes, hidden_dim)
-            selected_queries              # (num_queries, B, hidden_dim)
+            enhanced_image_features,  # (N, B, hidden_dim)
+            enhanced_text_features,   # (B, num_classes, hidden_dim)
+            selected_queries          # (num_queries, B, hidden_dim)
         )
         
         # ═══════════════════════════════════════════════════════

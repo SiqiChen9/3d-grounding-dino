@@ -222,16 +222,17 @@ class SwinTransformer3D(nn.Module):
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop_rate: float = 0.0,
-        attn_drop_rate: float = 0.0
+        attn_drop_rate: float = 0.0,
+        out_channels: int = None
     ):
         super().__init__()
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
         self.mlp_ratio = mlp_ratio
-        
+
         # Patch embedding
         self.patch_embed = PatchEmbed3D(patch_size, in_channels, embed_dim)
-        
+
         # Build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -248,15 +249,21 @@ class SwinTransformer3D(nn.Module):
                 for _ in range(depths[i_layer])
             ])
             self.layers.append(layer)
-        
+
         # Patch merging layers
         self.downsample_layers = nn.ModuleList([
             PatchMerging3D(dim=int(embed_dim * 2 ** i))
             if i < self.num_layers - 1 else nn.Identity()
             for i in range(self.num_layers)
         ])
-        
+
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+
+        # Output projection layer (e.g., 768 -> 256)
+        if out_channels is not None and out_channels != self.num_features:
+            self.output_proj = nn.Linear(self.num_features, out_channels)
+        else:
+            self.output_proj = None
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -267,14 +274,18 @@ class SwinTransformer3D(nn.Module):
         """
         # Patch embedding
         x = self.patch_embed(x)  # (B, D', H', W', C)
-        
+
         # Apply Swin blocks
         for i in range(self.num_layers):
             # Apply blocks in this layer
             for block in self.layers[i]:
                 x = block(x)
-            
+
             # Downsample
             x = self.downsample_layers[i](x)
-        
+
+        # Apply output projection if specified
+        if self.output_proj is not None:
+            x = self.output_proj(x)  # (B, D', H', W', out_channels)
+
         return x
