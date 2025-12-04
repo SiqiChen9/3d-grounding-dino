@@ -8,47 +8,106 @@
 
 ## Overview
 
-This project provides a **3D detection and classification framework for CT scans** with:
+This project implements a **3D Grounding-DETR framework** for volumetric CT scan analysis, adapted from the Grounding-DINO architecture for medical imaging:
 
-- ✓ **3D feature extractor** based on Swin Transformer for CT volumes  
-- ✓ **3D implementation of DETR** (encoder + decoder)  
-- ✓ **Pseudo-class token encoder** (simplified Grounding DINO-style approach)
-- ✓ **Complete training pipeline** with loss functions and evaluation metrics
-- **Pretraining on multiple CT datasets** (planned)
-- **Comparison with detection baselines** (planned)
-- **Evaluation on 3D detection and classification** baselines (planned)
+- ✅ **3D Swin Transformer backbone** with hierarchical feature extraction
+- ✅ **Cross-modality decoder** with separate text and image attention mechanisms
+- ✅ **Pseudo class token system** replacing text encoder for medical domain
+- ✅ **Hungarian matching** with set-based loss (CE + L1 + 3D GIoU)
+- ✅ **Complete training pipeline** with AdamW optimizer and cosine scheduling
+- ✅ **Evaluation metrics** including 3D IoU and mAP at multiple thresholds
+- ✅ **Comprehensive visualization tools** for 3D boxes and multi-slice views
+- 📋 **Pretraining on multiple CT datasets** (planned)
+- 📋 **Comparison with detection baselines** (planned)
+- 📋 **Classification task benchmarking** (planned)
 
 ---
 
-## MVP Features
+## MVP Features ✅
 
-The current MVP includes:
+The current MVP is **complete and functional**. All core components have been implemented and validated:
 
-### ✓ Data Pipeline
-- NIfTI segmentation loading
-- JPEG slice stacking into 3D volumes
-- Automatic bounding box extraction from segmentation masks
-- Data preprocessing (normalization, resampling, augmentation)
-- PyTorch Dataset and DataLoader integration
+### ✅ Data Pipeline
+- **NIfTI segmentation loading** with automatic 3D bounding box extraction
+- **JPEG slice stacking** into volumetric arrays
+- **Intensity normalization** for CT Hounsfield units
+- **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
+- **Data augmentation** with 3D rotations and flips (configurable)
+- **PyTorch Dataset integration** with custom collate function for variable-length boxes
+- **Train/validation split** with configurable ratio
 
-### ✓ Model Architecture
-- **3D Swin Transformer backbone** with patch embedding and window attention
-- **3D DETR head** with transformer encoder-decoder
-- **Learnable pseudo-class tokens** for category conditioning
-- **Cross-modal fusion** between queries and class embeddings
+### ✅ Model Architecture
+- **3D Swin Transformer backbone** (`swin3d_backbone.py`) ✅
+  - 4-stage hierarchical feature extraction with depths `[2, 2, 6, 2]`
+  - Patch embedding, window attention, and patch merging
+  - Output dimension: 768 channels
+  
+- **Pseudo Text Feature Generator** (`text_feature_generator.py`) ✅
+  - Learnable class embeddings `(num_classes, 256)`
+  - MLP projection for feature transformation
+  - Replaces text encoder for medical domain
+  
+- **Feature Enhancer** (`feature_enhancer.py`) ⚠️ **TODO**
+  - Currently implements identity/pass-through operation
+  - **Planned**: Bidirectional cross-attention between image and text features
+  
+- **Language-guided Query Selection** (`query_selection.py`) ⚠️ **TODO**
+  - Currently generates fixed learnable queries
+  - **Planned**: Dynamic query selection based on enhanced text features
+  
+- **Cross-Modality Decoder** (`cross_modality_decoder.py`) ✅
+  - Transformer encoder (6 layers) over image features
+  - Transformer decoder (6 layers) with dual cross-attention:
+    - Text cross-attention for category awareness
+    - Image cross-attention for spatial localization
+  - Prediction heads: classification (linear) + box regression (MLP)
 
-### ✓ Training Infrastructure
-- Hungarian matching for bipartite matching
-- Combined loss (classification CE + box L1 + GIoU)
-- AdamW optimizer with warmup + cosine annealing
-- Checkpoint saving and resuming
-- YAML-based configuration system
+- **Complete Integration** (`grounding_detr3d.py`) ✅
+  - End-to-end model with all components
+  - 100 learnable object queries
+  - Output: class logits + 6D bounding boxes `(cx, cy, cz, w, h, d)`
 
-### ✓ Evaluation & Inference
-- 3D IoU computation
-- 3D mAP calculation at multiple IoU thresholds
-- Inference script for predictions
-- Evaluation script for metric computation
+### ✅ Training Infrastructure
+- **Hungarian matching** for bipartite assignment between predictions and targets
+- **Combined loss function**:
+  - Classification: Cross-entropy with `eos_coef=0.1`
+  - Box L1 loss: Direct coordinate regression
+  - 3D GIoU loss: Scale-invariant overlap measure
+  - Configurable loss weights via YAML
+- **AdamW optimizer** with weight decay
+- **Learning rate scheduling**:
+  - Linear warmup (5 epochs)
+  - Cosine annealing decay
+- **Gradient clipping** (max_norm=20.0)
+- **Checkpoint management**:
+  - Best model based on validation loss
+  - Periodic saves every N epochs
+  - Resume training capability
+- **YAML configuration system** for all hyperparameters
+- **Logging system** with TensorBoard support and metrics tracking
+
+### ✅ Evaluation & Inference
+- **3D IoU computation** for volumetric boxes ✅
+- **3D mAP calculation** at multiple IoU thresholds `[0.1, 0.2, 0.3, 0.4, 0.5]` ✅
+- **Per-class Average Precision** tracking ✅
+- **Visualization notebook** (`predictions_visualization.ipynb`) for inference and mAP ✅
+- **Test suite** (`test_mvp.py`) validating all components ✅
+
+### ✅ Visualization Tools
+- **Single-slice visualization** (`visualize_single_slice`)
+  - Axial, sagittal, and coronal views
+  - Overlays predicted (red/dashed) and ground truth (green/solid) boxes
+  
+- **Multi-slice visualization** (`visualize_multi_slice`)
+  - 3×3 grid of evenly-spaced slices
+  - Configurable number of slices and viewing axis
+  
+- **3D to 2D box projection** (`box_3d_to_2d_slice`)
+  - Accurate coordinate transformation for each anatomical plane
+  
+- **Interactive Jupyter notebooks**:
+  - `datasets_visualization.ipynb`: Data exploration
+  - `predictions_visualization.ipynb`: Model predictions with mAP calculation
 
 ---
 
@@ -56,7 +115,7 @@ The current MVP includes:
 
 ### 1. Installation
 
-Follow the installation instructions below to set up the environment.
+Follow the [installation instructions](#installation) below to set up the environment.
 
 ### 2. Test the Implementation
 
@@ -66,78 +125,138 @@ Run the test suite to verify everything works:
 python test_mvp.py
 ```
 
-This will test:
-- Data loading
-- Model forward pass
-- Loss computation
-- Training step
+This validates:
+- Data loading pipeline
+- Model forward pass (all components)
+- Loss computation (Hungarian matching + combined loss)
+- Training step execution
 
-### 3. Train the Model
+### 3. Explore the Dataset
+
+Use the interactive notebook to visualize the CT data:
+
+```bash
+jupyter notebook datasets_visualization.ipynb
+```
+
+This notebook shows:
+- Volume slicing across different axes (axial/sagittal/coronal)
+- Segmentation mask overlays
+- 3D bounding box extraction
+- Data statistics
+
+### 4. Train the Model
 
 Start training with default configuration:
 
 ```bash
+# Basic training
 python train.py --config configs/default_config.yaml
+
+# With custom run name for logging
+python train.py --run-name my_experiment
+
+# Debug mode (1 epoch only)
+python train.py --debug
 ```
 
-Options:
-- `--debug`: Run for 1 epoch only (for testing)
-- `--resume <checkpoint>`: Resume from checkpoint
-- `--device <device>`: Specify device (cuda/cpu)
+**Training Options:**
 
-### 4. Run Inference
+- `--config`: Path to config YAML (default: `configs/default_config.yaml`)
+- `--run-name`: Experiment name for logging and checkpoints
+- `--debug`: Run for 1 epoch only (quick sanity check)
+- `--resume <checkpoint>`: Resume from checkpoint file
+- `--device <device>`: Specify device (`cuda`, `cpu`, or `cuda:0`)
 
-Predict on a single sample:
+**Outputs:**
+- Checkpoints saved to `checkpoints/<run_name>/`
+- Logs saved to `logs/<run_name>/`
+- TensorBoard logs for visualization
+
+### 5. Visualize Predictions
+
+Use the interactive notebook to view model predictions:
 
 ```bash
-python inference.py --checkpoint checkpoints/model_best.pth --sample_idx 0
+jupyter notebook predictions_visualization.ipynb
 ```
 
-### 5. Evaluate Model
-
-Compute metrics on validation set:
-
-```bash
-python evaluate.py --checkpoint checkpoints/model_best.pth --data_dir ./datasets
-```
-
-### 6. Visualize Results
-
-Generate visualizations of predictions:
-
-```bash
-# Single-slice view with predictions and ground truth
-python visualize.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --show_gt
-
-# Multi-slice view (9 slices)
-python visualize.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --multi_view
-
-# Visualize during inference
-python inference.py --checkpoint checkpoints/model_best.pth --sample_idx 0 --visualize --multi_view
-```
-
-**Visualization Options**:
-- `--show_gt`: Display ground truth boxes alongside predictions
-- `--multi_view`: Create multi-slice visualization
-- `--num_slices N`: Number of slices to show (default: 9)
-- `--axis`: View axis (axial/sagittal/coronal)
-- `--output_dir`: Directory to save visualizations
-
-**Interactive Demo**:
-```bash
-jupyter notebook demo_visualization.ipynb
-```
+**This notebook provides:**
+- Model inference on validation samples
+- Visualization of predicted boxes vs ground truth
+- Multi-slice views (axial/sagittal/coronal)
+- mAP calculation at multiple IoU thresholds
+- Per-class Average Precision analysis
 
 ---
 
 ## Configuration
 
-Edit `configs/default_config.yaml` to customize:
+All hyperparameters are controlled via `configs/default_config.yaml`:
 
-- **Data**: batch size, volume size, dataset path
-- **Model**: number of classes, queries, hidden dimensions, backbone architecture
-- **Training**: learning rate, epochs, warmup, loss weights
-- **Paths**: checkpoint and log directories
+### Data Configuration
+- **dataset_path**: Path to dataset directory
+- **image_size**: Target volume size `[D, H, W]` (default: `[64, 64, 64]`)
+- **batch_size**: Training batch size (default: 2)
+- **num_workers**: DataLoader workers (default: 4)
+- **train_split**: Train/validation split ratio (default: 0.8)
+- **augment**: Enable/disable data augmentation (default: false)
+
+### Model Configuration
+- **num_classes**: Number of target classes (default: 5)
+- **num_queries**: Number of object queries (default: 100)
+- **hidden_dim**: Hidden dimension for decoder (default: 256)
+- **backbone_embed_dim**: Swin3D initial embedding dim (default: 96)
+- **backbone_depths**: Depths of each Swin3D stage (default: `[2, 2, 6, 2]`)
+- **backbone_num_heads**: Attention heads per stage (default: `[3, 6, 12, 24]`)
+- **num_encoder_layers**: Transformer encoder layers (default: 6)
+- **num_decoder_layers**: Transformer decoder layers (default: 6)
+- **num_heads**: Attention heads in decoder (default: 8)
+- **dim_feedforward**: FFN hidden dimension (default: 2048)
+- **dropout**: Dropout rate (default: 0.1)
+- **use_grounding**: Enable grounding-style architecture (default: true)
+
+### Training Configuration
+- **epochs**: Total training epochs (default: 100)
+- **lr**: Initial learning rate (default: 0.001)
+- **weight_decay**: AdamW weight decay (default: 0.0001)
+- **warmup_epochs**: Linear warmup epochs (default: 5)
+- **clip_max_norm**: Gradient clipping threshold (default: 20.0)
+- **log_interval**: Steps between logging (default: 10)
+- **val_interval**: Epochs between validation (default: 5)
+- **save_interval**: Epochs between checkpoints (default: 10)
+
+### Loss Configuration
+- **cost_class**: Classification cost weight for matching (default: 1.0)
+- **cost_bbox**: Box L1 cost weight for matching (default: 5.0)
+- **cost_giou**: GIoU cost weight for matching (default: 2.0)
+- **weight_ce**: Classification loss weight (default: 1.0)
+- **weight_l1**: Box L1 loss weight (default: 5.0)
+- **weight_giou**: GIoU loss weight (default: 2.0)
+- **eos_coef**: "No object" class weight (default: 0.1)
+
+### Paths Configuration
+- **checkpoint_dir**: Directory for saving checkpoints (default: `./checkpoints`)
+- **log_dir**: Directory for training logs (default: `./logs`)
+
+**Example:**
+```yaml
+data:
+  dataset_path: ./datasets
+  image_size: [64, 64, 64]
+  batch_size: 2
+  augment: false
+
+model:
+  num_classes: 5
+  num_queries: 100
+  hidden_dim: 256
+
+training:
+  epochs: 100
+  lr: 0.001
+  warmup_epochs: 5
+```
 
 ---
 
@@ -146,56 +265,93 @@ Edit `configs/default_config.yaml` to customize:
 ```
 3d-grounding-dino/
 ├── configs/
-│   └── default_config.yaml       # Configuration file
+│   └── default_config.yaml          # Hyperparameters and paths
+│
 ├── datasets/
-│   ├── rsna_dataset.py           # Dataset loader
-│   ├── preprocessing.py          # Preprocessing utilities
+│   ├── rsna_dataset.py              # CT volume dataset loader
+│   ├── preprocessing.py             # Data preprocessing utilities
 │   └── __init__.py
+│
 ├── models/
-│   ├── swin3d_backbone.py        # 3D Swin Transformer
-│   ├── detr3d_head.py           # DETR detection head
-│   ├── grounding_module.py      # Pseudo-class token encoder
-│   ├── grounding_detr3d.py      # Complete model
-│   ├── losses.py                # Loss functions
+│   ├── swin3d_backbone.py          # 3D Swin Transformer backbone
+│   ├── text_feature_generator.py   # Pseudo class token embeddings
+│   ├── feature_enhancer.py         # Feature enhancement modules
+│   ├── query_selection.py          # Object query generation
+│   ├── cross_modality_decoder.py   # Cross-attention decoder
+│   ├── grounding_detr3d.py         # Complete model integration
+│   ├── losses.py                   # Hungarian matching + losses
+│   ├── sanity_check_model.py       # Simplified debug model
 │   └── __init__.py
+│
 ├── utils/
-│   ├── metrics.py               # Evaluation metrics
+│   ├── metrics.py                  # 3D IoU, mAP calculation
+│   ├── visualization.py            # 3D box visualization tools
+│   ├── logger.py                   # Training logger
+│   ├── plot_metrics.py             # Metric plotting
 │   └── __init__.py
-├── train.py                     # Training script
-├── evaluate.py                  # Evaluation script
-├── inference.py                 # Inference script
-├── test_mvp.py                  # Test suite
-├── segmentation_analysis.py     # Data visualization tool
-└── README.md
+│
+├── train.py                        # Main training script
+├── test_mvp.py                     # Component test suite
+├── debug_*.py                      # Debug scripts
+│
+├── datasets_visualization.ipynb    # Data exploration notebook
+├── predictions_visualization.ipynb # Prediction visualization notebook
+│
+├── ARCHITECTURE.md                 # Detailed architecture docs
+├── README.md                       # This file
+├── requirements.txt                # Python dependencies
+├── environment.yml                 # Conda environment
+└── LICENSE
 ```
 
 ---
 
 ## Model Architecture
 
-The 3D Grounding-DETR consists of:
+For detailed architecture documentation, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-1. **3D Swin Transformer Backbone**:
-   - 4-stage hierarchical feature extraction
-   - 3D window attention with shifted windows
+### Component Summary
+
+1. **3D Swin Transformer Backbone** (96 → 768 channels)
+   - Patch embedding: `(4,4,4)` patches
+   - 4 hierarchical stages with window attention
    - Patch merging for downsampling
+   - Final output: `(B, D/32, H/32, W/32, 768)`
 
-2. **Grounding Module**:
-   - Learnable pseudo-class token embeddings
-   - Cross-attention fusion with object queries
+2. **Pseudo Text Feature Generator**
+   - Learnable class embeddings for 5 organ injury classes
+   - MLP projection layer
+   - Output: `(B, 5, 256)` category features
 
-3. **3D DETR Head**:
-   - Transformer encoder (6 layers)
-   - Transformer decoder (6 layers)
-   - 100 learnable object queries
-   - Classification head (num_classes + 1)
-   - Box regression head (6D boxes: cx, cy, cz, w, h, d)
+3. **Feature Enhancer**
+   - Self-attention on image features
+   - Self-attention on text features
+   - Cross-attention between modalities
 
-4. **Loss Functions**:
-   - Hungarian matcher for bipartite matching
-   - Classification loss (cross-entropy)
-   - Box L1 loss
-   - Box GIoU loss (3D generalized IoU)
+4. **Cross-Modality Decoder**
+   - **Encoder** (6 layers): Processes flattened image features
+   - **Decoder** (6 layers): Each layer has:
+     - Self-attention on object queries
+     - Cross-attention with text features
+     - Cross-attention with image features
+     - FFN with residual connections
+   - **Prediction Heads**:
+     - Classification: `Linear(256 → 6)` for 5 classes + background
+     - Box Regression: 3-layer MLP `256 → 256 → 6` for `(cx,cy,cz,w,h,d)`
+
+5. **Loss Functions**
+   - **Hungarian Matcher**: Optimal bipartite matching
+   - **Classification Loss**: Cross-entropy with class balancing
+   - **Box L1 Loss**: Direct coordinate regression
+   - **3D GIoU Loss**: Generalized IoU for scale invariance
+   - Total: `L = λ_ce·L_ce + λ_l1·L_l1 + λ_giou·L_giou`
+
+### Key Design Decisions
+
+- **Window Attention**: Currently full attention (efficient windowing planned)
+- **Pseudo Tokens**: Replaces text encoder for fixed medical categories
+- **Dual Cross-Attention**: Separate paths for category and spatial information
+- **6D Boxes**: Normalized coordinates `(cx, cy, cz, w, h, d)` relative to volume size
 
 ---
 
@@ -431,47 +587,32 @@ For actual experiments and final results, larger CT datasets and the full RSNA c
 
 ---
 
-## Architecture & Method (High-Level)
-
-- **Backbone:**
-  3D Swin Transformer for volumetric CT data, extracting hierarchical 3D feature maps.
-- **Head:**
-  3D DETR implementation:
-  - Transformer encoder over 3D features
-  - Transformer decoder with learnable queries for 3D boxes / classes
-- **Text / Pseudo Class Tokens (Grounding-style):**
-  - Explore using text prompts or pseudo class tokens to encode category or exemplar information.
-  - Optionally integrate ideas from Grounding DINO / exemplar-DETR to allow:
-    - category-based detection
-    - exemplar / prototype-based detection
-
----
-
 ## Evaluation & Metrics
 
-Planned metrics include:
+### ✅ Implemented Metrics
 
 - **3D Detection**
-  - **mAP @ IoU thresholds** (e.g. 0.1–0.5) on 3D bounding boxes
-  - **FROC** (Free-response ROC) where appropriate (lesion-level evaluation)
-- **3D Classification**
-  - **AUC (ROC)**
-  - **F1 score**
-  - Accuracy, precision, recall
+  - ✅ **3D IoU computation** for volumetric bounding boxes
+  - ✅ **mAP @ IoU thresholds** (0.1, 0.2, 0.3, 0.4, 0.5) for 3D bounding boxes
+  - ✅ **Per-class Average Precision** tracking
+  - 📋 **FROC** (Free-response ROC) for lesion-level evaluation (planned)
+
+- **3D Classification** (planned)
+  - **AUC (ROC)** for classification tasks
+  - **F1 score, Accuracy, Precision, Recall**
+  - Binary and multi-class classification metrics
 
 ---
 
 ## Contributing
 
-This project is currently under active development.
+This project is currently under active development for research purposes.
 
-- For team members:
-  - Please use feature branches and pull requests.
-  - Follow the project’s coding style and commit message conventions.
-- External contributions:
-  - Will be considered after the initial internal development phase.
+- **For team members:**
+  - Use feature branches and pull requests
+  - Follow the project's coding style and commit message conventions
+  - Update documentation for significant changes
 
-
-
-
-
+- **External contributions:**
+  - Will be considered after the initial research phase
+  - Please open an issue to discuss before submitting PRs

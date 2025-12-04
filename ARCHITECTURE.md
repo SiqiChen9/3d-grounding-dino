@@ -1,535 +1,477 @@
-# 3D Grounding-DETR Architecture
+# Architecture Documentation
 
 ## Overview
 
-This document describes the complete architecture of the 3D Grounding-DETR model for volumetric object detection in CT scans. The model combines hierarchical 3D feature extraction, transformer-based detection, and grounding-style category conditioning.
+This document describes the architecture of the **3D Grounding-DETR** model for CT volume detection. The model combines a 3D Swin Transformer backbone with a cross-modality decoder inspired by Grounding-DINO, adapted for 3D medical image analysis.
 
 ---
 
 ## High-Level Architecture
 
-```mermaid
-graph TB
-    Input["CT Volume<br/>(B, 1, D, H, W)"] --> Backbone["3D Swin Transformer<br/>Backbone"]
-    Backbone --> Features["Feature Map<br/>(B, D', H', W', C)"]
-    Features --> Encoder["DETR Transformer<br/>Encoder"]
-    
-    Classes["Class Queries<br/>(num_classes)"] --> PseudoTokens["Pseudo-Class Token<br/>Encoder"]
-    PseudoTokens --> ClassEmbeds["Class Embeddings<br/>(num_classes, hidden_dim)"]
-    
-    Encoder --> EncFeats["Encoded Features"]
-    ObjectQueries["Object Queries<br/>(num_queries)"] --> Fusion["Grounding Fusion<br/>(Cross-Attention)"]
-    ClassEmbeds --> Fusion
-    
-    Fusion --> CondQueries["Conditioned Queries"]
-    CondQueries --> Decoder["DETR Transformer<br/>Decoder"]
-    EncFeats --> Decoder
-    
-    Decoder --> DecoderOut["Query Features"]
-    DecoderOut --> ClassHead["Classification Head"]
-    DecoderOut --> BoxHead["Box Regression Head"]
-    
-    ClassHead --> PredLogits["Predicted Logits<br/>(B, num_queries, num_classes+1)"]
-    BoxHead --> PredBoxes["Predicted Boxes<br/>(B, num_queries, 6)"]
+The model follows this architecture from `grounding_detr3d.py`:
+
 ```
+┌─────────────────────────────────────────────────────┐
+│ 1. Model Overall                                    │
+│    ┌─────────────┐         ┌──────────────────┐     │
+│    │ Image       │         │ Pseudo Text      │     │
+│    │ Backbone    │         │ Feature Gen      │     │
+│    │ (Swin3D)    │         │                  │     │
+│    └──────┬──────┘         └────────┬─────────┘     │
+│           │                         │               │
+│           │ Vanilla Features        │               │
+│           ▼                         ▼               │
+│    ┌──────────────────────────────────────────┐     │
+│    │ 2. Feature Enhancer (TODO)               │     │
+│    │    - Bidirectional cross-attention       │     │
+│    └──────┬───────────────────────┬───────────┘     │
+│           │                       │                 │
+│           │ Enhanced Features     │                 │
+│           ▼                       │                 │
+│    ┌──────────────┐               │                 │
+│    │ Language-    │◀──────────────┘                 │
+│    │ guided Query │                                 │
+│    │ Selection    │                                 │
+│    └──────┬───────┘                                 │
+│           │ Selected Queries                        │
+│           ▼                                         │
+│    ┌─────────────────────────────────────────┐      │
+│    │ 3. Cross-Modality Decoder               │      │
+│    │    - Self-Attention                     │      │
+│    │    - Text Cross-Attention               │      │
+│    │    - Image Cross-Attention              │      │
+│    │    - FFN                                │      │
+│    └──────┬──────────────────────────────────┘      │
+│           │                                         │
+│           ▼                                         │
+│    ┌─────────────────┐                              │
+│    │ Prediction Heads│                              │
+│    │ - Class         │                              │
+│    │ - BBox          │                              │
+│    └─────────────────┘                              │
+└─────────────────────────────────────────────────────┘
+```
+
+**Input:** CT Volume `(B, 1, D, H, W)`
+
+**Output:** 
+- Classification logits: `(B, num_queries, num_classes+1)`
+- Bounding boxes: `(B, num_queries, 6)` in format `(cx, cy, cz, w, h, d)`
+
+### Implementation Status
+
+✅ **Fully Implemented:**
+- Component 1: Image Backbone (Swin3D)
+- Component 2: Pseudo Text Feature Generator
+- Component 3: Cross-Modality Decoder with prediction heads
+
+⚠️ **Placeholder/TODO:**
+- **Feature Enhancer**: Currently implements identity operation (pass-through). Planned: bidirectional cross-attention between image and text features
+- **Language-guided Query Selection**: Currently generates fixed learnable queries. Planned: dynamic query selection based on text features
 
 ---
 
 ## Component Details
 
-### 1. 3D Swin Transformer Backbone
+### 1. **Image Backbone: 3D Swin Transformer**
 
-**Purpose**: Hierarchical feature extraction from 3D CT volumes
+**File:** `models/swin3d_backbone.py`
 
-**Architecture**:
-```
-Input Volume (1, 64, 128, 128)
-    ↓
-Patch Embedding (96 channels)
-    → Patch size: 4×4×4
-    → Output: (16, 32, 32, 96)
-    ↓
-Stage 1: 2 Swin Blocks (96 channels)
-    → Window size: 7×7×7
-    → 3 attention heads
-    ↓
-Patch Merging → (8, 16, 16, 192)
-    ↓
-Stage 2: 2 Swin Blocks (192 channels)
-    → 6 attention heads
-    ↓
-Patch Merging → (4, 8, 8, 384)
-    ↓
-Stage 3: 6 Swin Blocks (384 channels)
-    → 12 attention heads
-    ↓
-Patch Merging → (2, 4, 4, 768)
-    ↓
-Stage 4: 2 Swin Blocks (768 channels)
-    → 24 attention heads
-    ↓
-Output Features: (B, 2, 4, 4, 768)
-```
+**Purpose:** Extract hierarchical 3D features from CT volumes.
 
-**Key Components**:
-- **PatchEmbed3D**: Converts volume to patch embeddings
-- **WindowAttention3D**: Self-attention within 3D windows
-- **SwinTransformerBlock3D**: Standard Swin block with window attention + MLP
-- **PatchMerging3D**: Downsamples by merging 2×2×2 patches
+**Key Modules:**
+- **PatchEmbed3D**: Converts input volume into 3D patches with embedding dimension 96
+  - Input: `(B, 1, D, H, W)`
+  - Output: `(B, D', H', W', 96)` where `D'=D/4, H'=H/4, W'=W/4`
+  
+- **SwinTransformerBlock3D**: Self-attention block with window-based mechanism
+  - Window Attention (currently full attention in MVP)
+  - Feed-Forward Network (MLP)
+  - Layer Normalization
+  
+- **PatchMerging3D**: Hierarchical downsampling (reduces spatial dimensions by 2x, doubles channels)
 
-**Parameters**:
-```python
-depths = [2, 2, 6, 2]           # Blocks per stage
-num_heads = [3, 6, 12, 24]      # Attention heads per stage
-embed_dim = 96                   # Initial embedding dimension
-window_size = (7, 7, 7)         # 3D window size
-mlp_ratio = 4.0                 # MLP hidden dim multiplier
-```
+**Architecture:**
+- **4 stages** with depths `[2, 2, 6, 2]`
+- **Multi-head attention** with heads `[3, 6, 12, 24]`
+- **Window size**: `(7, 7, 7)` (for future windowed attention implementation)
+- **Output channels**: 768 (96 × 2³)
+- **Final feature size**: `(B, D/32, H/32, W/32, 768)` for input `(64, 64, 64)`
+
+**Note:** Current implementation uses full self-attention. Window partitioning for efficient local attention is planned for future optimization.
 
 ---
 
-### 2. Grounding Module
+### 2. **Text Feature Generator: Pseudo Class Tokens**
 
-**Purpose**: Generate category-aware embeddings and fuse them with object queries
+**File:** `models/text_feature_generator.py`
 
-```mermaid
-graph LR
-    NumClasses["Class IDs<br/>(0 to num_classes-1)"] --> Embedding["Learnable Embeddings<br/>(num_classes, hidden_dim)"]
-    Embedding --> MLP["Token Projection<br/>(MLP)"]
-    MLP --> ClassTokens["Class Tokens<br/>(num_classes, hidden_dim)"]
-    
-    Queries["Object Queries<br/>(num_queries, hidden_dim)"] --> CrossAttn["Cross-Attention<br/>(Q=queries, K=V=class_tokens)"]
-    ClassTokens --> CrossAttn
-    
-    CrossAttn --> Dropout["Dropout"]
-    Dropout --> Residual["+ Residual"]
-    Queries --> Residual
-    Residual --> Norm["Layer Normalization"]
-    Norm --> Output["Conditioned Queries<br/>(num_queries, hidden_dim)"]
-```
+**Purpose:** Generate learnable class-specific embeddings (replaces text encoder in original Grounding-DINO).
 
-**Components**:
+**Architecture:**
 
-1. **PseudoClassTokenEncoder**:
-   - Learnable embeddings for each class (`nn.Embedding(num_classes, hidden_dim)`)
-   - MLP projection for feature transformation
-   - Generates class-specific semantic prototypes
-   - Replaces full text encoder (BERT-style) for MVP simplicity
+- **Learnable Embeddings**: `(num_classes, hidden_dim)` parameter tensor
+- **Projection Network**: 2-layer MLP with ReLU activation
+  - `Linear(256, 256) → ReLU → Linear(256, 256)`
+- **Output**: `(B, num_classes, 256)` pseudo text features
 
-2. **Grounding Fusion (in DETR3DHead)**:
-   - Multi-head cross-attention: queries attend to class tokens
-   - Applied **once before decoder layers** (not in each layer)
-   - Residual connection + dropout for stable training
-   - Layer normalization for training stability
-
-**Integration Flow**:
-1. Generate class tokens for all classes
-2. Object queries initialized with learnable embeddings
-3. **Fusion step**: Queries cross-attend to class tokens
-4. Conditioned queries enter decoder layers
-
-**Parameters**:
-```python
-num_classes = 5
-hidden_dim = 256
-num_heads = 8  # For fusion attention
-```
+**Design Rationale:**
+- Instead of processing real text prompts, uses trainable embeddings for fixed class set
+- Provides category-conditional information to the decoder
+- Can be frozen or fine-tuned depending on the task
 
 ---
 
-### 3. DETR 3D Detection Head
+### 3. **Feature Enhancer** ⚠️ TODO
 
-**Purpose**: Transform features to object predictions using transformers
+**File:** `models/feature_enhancer.py`
 
-```mermaid
-graph TB
-    Features["Backbone Features<br/>(B, 2, 4, 4, 768)"] --> Proj["Input Projection<br/>Conv3D(768→256)"]
-    Proj --> Flat["Flatten Spatial<br/>(B, 32, 256)"]
-    Flat --> AddPos["+ Positional Encoding<br/>(learnable)"]
-    
-    AddPos --> EncLayer1["Encoder Layer 1<br/>(Self-Attention + FFN)"]
-    EncLayer1 --> EncLayer2["..."]
-    EncLayer2 --> EncLayer6["Encoder Layer 6"]
-    
-    EncLayer6 --> Memory["Memory<br/>(B, 32, 256)"]
-    
-    ObjQueries["Object Query Embeddings<br/>(100, 256)"] --> InitTgt["Initialize tgt<br/>(clone query_embed)"]
-    ClassTokens["Class Tokens<br/>(5, 256)"] --> GroundFusion["Grounding Fusion<br/>(Cross-Attention)"]
-    InitTgt --> GroundFusion
-    
-    GroundFusion --> CondQueries["Conditioned Queries<br/>(100, 256)"]
-    CondQueries --> DecLayer1["Decoder Layer 1<br/>(Self-Attn + Cross-Attn + FFN)"]
-    Memory --> DecLayer1
-    DecLayer1 --> DecLayer2["..."]
-    DecLayer2 --> DecLayer6["Decoder Layer 6"]
-    
-    DecLayer6 --> QueryFeats["Query Features<br/>(B, 100, 256)"]
-    
-    QueryFeats --> ClassHead["Linear(256→num_classes+1)"]
-    QueryFeats --> BoxMLP["MLP(256→6)"]
-    
-    ClassHead --> Logits["Classification Logits<br/>(B, 100, 6)"]
-    BoxMLP --> BoxesSigmoid["Sigmoid"]
-    BoxesSigmoid --> Boxes["Predicted Boxes<br/>(B, 100, 6)"]
-```
+**Purpose:** Enhance image and text features through bidirectional interaction.
 
-**Encoder**:
-- 6 transformer encoder layers
-- Self-attention over flattened spatial features
-- Feed-forward network (MLP) with expansion factor 8
-- Dropout rate: 0.1
+**Current Status:** **Placeholder implementation** - currently acts as identity/pass-through operation.
 
-**Decoder**:
-- **Query Initialization**: `tgt = query_embed.clone()` (learnable, unique per query)
-- **Grounding Fusion** (optional, before decoder layers):
-  - Cross-attention between queries and class tokens
-  - Only applied when `use_grounding_fusion=True`
-- 6 transformer decoder layers:
-  - Self-attention over object queries
-  - Cross-attention to encoder memory
-  - Feed-forward network
-- 100 learnable object queries
+**Planned Architecture:**
+- **Self-Attention Layers**: Refine features within each modality independently
+- **Bidirectional Cross-Attention**: Fuse information between image and text features
+  - Image-to-Text attention: Help text features attend to relevant image regions
+  - Text-to-Image attention: Guide image features based on semantic categories
+- **Layer Normalization** and residual connections
+- **Multiple enhancement layers** for iterative refinement
 
-**Prediction Heads**:
+**Current Implementation:**
 ```python
-# Classification head
-class_embed = Linear(hidden_dim, num_classes + 1)  # +1 for background
-
-# Box regression head (MLP with 3 layers)
-bbox_embed = MLP(
-    input_dim=hidden_dim,
-    hidden_dim=hidden_dim,
-    output_dim=6,  # (cx, cy, cz, w, h, d)
-    num_layers=3
+# Currently in grounding_detr3d.py forward():
+# Identity operation - features pass through unchanged
+enhanced_text_features, enhanced_image_features = self.feature_enhancer(
+    vanilla_text_features,
+    image_features_flat
 )
-# Sigmoid activation for normalized coordinates [0, 1]
+# Output: Same as input (no enhancement applied)
 ```
+
+**TODO:**
+
+- Implement bidirectional cross-attention mechanism
+- Add self-attention refinement for each modality
+- Tune number of enhancement layers and attention heads
 
 ---
 
-### 4. Loss Functions
+### 4. **Query Selection** ⚠️ TODO
 
-**Hungarian Matching**:
-```mermaid
-graph LR
-    Predictions["Predictions<br/>(num_queries)"] --> CostMatrix["Cost Matrix<br/>C[i,j]"]
-    Targets["Targets<br/>(num_targets)"] --> CostMatrix
-    
-    CostMatrix --> Hungarian["Hungarian Algorithm<br/>(scipy.optimize)"]
-    Hungarian --> Matches["Optimal Matches<br/>(src_idx, tgt_idx)"]
-    
-    subgraph "Cost Components"
-        ClassCost["Classification Cost<br/>-p[class]"]
-        L1Cost["L1 Cost<br/>||box_pred - box_gt||₁"]
-        GIoUCost["GIoU Cost<br/>-GIoU(pred, gt)"]
-    end
-    
-    ClassCost --> CostMatrix
-    L1Cost --> CostMatrix
-    GIoUCost --> CostMatrix
-```
+**File:** `models/query_selection.py`
 
-**Set-Based Criterion**:
+**Purpose:** Generate language-guided object queries for detection.
+
+**Current Status:** **Placeholder implementation** - generates fixed learnable queries.
+
+**Planned Architecture:**
+- **Content Queries**: Dynamic query generation based on enhanced text features
+- **Positional Queries**: Spatial prior encoding
+- **Query Modulation**: Adjust queries based on category information from text
+- **Top-k Selection**: Select most relevant queries per category
+
+**Current Implementation:**
 ```python
-total_loss = (
-    λ_ce × classification_loss +
-    λ_l1 × bbox_l1_loss +
-    λ_giou × bbox_giou_loss
-)
+# Currently generates fixed learnable queries
+# Shape: (num_queries, hidden_dim)
+# These are the same for all inputs and batches
 ```
 
-**Loss Weights** (default):
-- Classification: 2.0
-- L1: 5.0
-- GIoU: 2.0
-- Background class weight (eos_coef): 0.1
+**TODO:**
+- Implement dynamic query generation conditioned on text features
+- Add query-text matching/modulation mechanism
+- Explore category-specific query initialization
 
 ---
 
-## Complete Forward Pass
+### 5. **Cross-Modality Decoder**
 
-### Input/Output Specifications
+**File:** `models/cross_modality_decoder.py`
 
-**Input**:
-- Shape: `(batch_size, 1, D, H, W)`
-- Type: `torch.float32`
-- Range: `[0, 1]` (normalized CT intensities)
-- Default size: `(B, 1, 64, 128, 128)`
+**Purpose:** Core detection module that fuses multi-modal information for prediction.
 
-**Output**:
-```python
-{
-    'pred_logits': Tensor(B, num_queries, num_classes+1),  # Classification scores
-    'pred_boxes': Tensor(B, num_queries, 6),               # Normalized 3D boxes
-    'class_tokens': Tensor(B, num_classes, hidden_dim)     # Class embeddings (optional)
-}
-```
+**Architecture:**
 
-**Box Format**: `(cx, cy, cz, w, h, d)` normalized to `[0, 1]`
-- `cx, cy, cz`: Center coordinates
-- `w, h, d`: Width, height, depth
+#### Transformer Encoder (6 layers)
+- Processes flattened image features: `(D'×H'×W', B, C)`
+- **Self-Attention**: Captures spatial relationships
+- **Feed-Forward Network**: Non-linear transformation
+- **Positional Encoding**: Learnable 3D positional embeddings
 
----
+#### Cross-Modality Decoder Layers (6 layers)
+Each decoder layer contains three sub-modules:
 
-### Detailed Forward Pass Flow
+1. **Self-Attention on Queries**
+   - Multi-head attention among object queries
+   - Enables query-to-query interaction
+   
+2. **Cross-Attention with Text Features**
+   - `Q`: Object queries `(num_queries, B, C)`
+   - `K, V`: Text features `(num_classes, B, C)`
+   - Enables category-aware detection
+   
+3. **Cross-Attention with Image Features**
+   - `Q`: Object queries `(num_queries, B, C)`
+   - `K, V`: Encoded image features `(N, B, C)`
+   - Localizes objects in the 3D volume
 
-```mermaid
-sequenceDiagram
-    participant Input as CT Volume
-    participant Backbone as Swin3D Backbone
-    participant Grounding as Grounding Module
-    participant Encoder as Transformer Encoder
-    participant Fusion as Grounding Fusion
-    participant Decoder as Transformer Decoder
-    participant Heads as Prediction Heads
-    
-    Input->>Backbone: (B,1,64,128,128)
-    Backbone->>Backbone: Patch Embed → (B,16,32,32,96)
-    Backbone->>Backbone: 4 Stages with Swin Blocks
-    Backbone->>Encoder: Features (B,2,4,4,768)
-    
-    Encoder->>Encoder: Project to hidden_dim (256)
-    Encoder->>Encoder: Flatten spatial dims
-    Encoder->>Encoder: Add positional encoding
-    Encoder->>Encoder: 6 Encoder layers
-    Encoder->>Decoder: Memory (B,32,256)
-    
-    Note over Grounding: Generate Class Tokens
-    Grounding->>Grounding: Embedding lookup (num_classes)
-    Grounding->>Grounding: MLP projection
-    Grounding->>Fusion: Class tokens (B,5,256)
-    
-    Note over Fusion: Condition Queries with Semantics
-    Fusion->>Fusion: Initialize tgt = query_embed.clone()
-    Fusion->>Fusion: Cross-attention (Q=queries, K=V=class_tokens)
-    Fusion->>Fusion: Residual + LayerNorm
-    Fusion->>Decoder: Conditioned queries (100,B,256)
-    
-    Decoder->>Decoder: 6 Decoder layers (Self-Attn + Cross-Attn + FFN)
-    Decoder->>Heads: Query features (B,100,256)
-    
-    Heads->>Heads: Classification head
-    Heads->>Heads: Box regression head
-    Heads-->>Input: pred_logits, pred_boxes
-```
+Each sub-module is followed by:
+- **Residual Connection**
+- **Layer Normalization**
+- **Dropout** (0.1)
+
+#### Prediction Heads
+
+1. **Classification Head**
+   - `Linear(256, num_classes + 1)`
+   - Output: `(B, num_queries, 6)` — includes "no object" class
+   
+2. **Box Regression Head (MLP)**
+   - 3-layer MLP: `256 → 256 → 256 → 6`
+   - ReLU activations between layers
+   - Output: `(B, num_queries, 6)` — normalized 3D box coordinates `(cx, cy, cz, w, h, d)`
 
 ---
 
-## Model Statistics
+## Loss Functions
 
-### Parameter Count
+**File:** `models/losses.py`
 
-**Default Configuration**:
+### Hungarian Matcher
+- **Bipartite matching** between predictions and ground truth
+- **Cost matrix** components:
+  - Classification cost: Cross-entropy
+  - L1 box cost: L1 distance between box coordinates
+  - GIoU cost: 3D Generalized IoU
+
+### Set Criterion (Combined Loss)
+Three loss components with configurable weights:
+
+1. **Classification Loss** (Cross Entropy)
+   - Weight: 1.0
+   - Handles class imbalance with `eos_coef=0.01` for "no object" class
+
+2. **Box L1 Loss**
+   - Weight: 5.0
+   - Direct coordinate regression
+
+3. **3D GIoU Loss**
+   - Weight: 2.0
+   - Scale-invariant, handles box overlap
+   - Computes IoU and enclosing box area for generalization
+
+**Total Loss:**
 ```
-3D Swin Transformer Backbone:  ~35.7M parameters
-DETR Head:                     ~10.2M parameters
-Grounding Module:              ~1.5M parameters
-─────────────────────────────────────────────
-Total:                         ~47.4M parameters
+L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
 ```
-
-**Parameter Breakdown**:
-- Patch embedding: 0.1M
-- Swin stages: 35.6M
-  - Stage 1 (96 channels): 0.5M
-  - Stage 2 (192 channels): 2.1M
-  - Stage 3 (384 channels): 16.8M
-  - Stage 4 (768 channels): 16.2M
-- Transformer encoder: 6.3M
-- Transformer decoder: 3.8M
-- Prediction heads: 0.1M
-- Grounding module: 1.5M
-
-### Computation
-
-**FLOPs** (approximate, for 64×128×128 input):
-- Backbone: ~450 GFLOPs
-- Encoder: ~18 GFLOPs
-- Decoder: ~25 GFLOPs
-- **Total**: ~493 GFLOPs per forward pass
-
-**Memory** (training with batch_size=2):
-- Model parameters: ~190 MB
-- Activations (forward): ~2.5 GB
-- Gradients (backward): ~380 MB
-- Optimizer states (AdamW): ~380 MB
-- **Peak**: ~3.5 GB
 
 ---
 
-## Configuration
+## Data Pipeline
 
-### Model Hyperparameters
+**File:** `datasets/rsna_dataset.py`
 
-```yaml
-model:
-  # Backbone
-  backbone_embed_dim: 96
-  backbone_depths: [2, 2, 6, 2]
-  backbone_num_heads: [3, 6, 12, 24]
+### RSNAVolumeDataset
+- **Input Format**:
+  - NIfTI segmentation masks (`.nii` files)
+  - JPEG slice images (stacked into 3D volumes)
   
-  # DETR Head
-  hidden_dim: 256
-  num_queries: 100
-  num_encoder_layers: 6
-  num_decoder_layers: 6
-  num_heads: 8
-  dim_feedforward: 2048
-  dropout: 0.1
-  
-  # Task
-  num_classes: 5
-  
-  # Grounding
-  use_grounding: true
-```
+- **Processing Steps**:
+  1. Load segmentation mask and corresponding JPEG slices
+  2. Stack 2D slices into 3D volume
+  3. Extract 3D bounding boxes from segmentation masks
+  4. Normalize intensity values (CT Hounsfield units)
+  5. Resize to target dimensions: `(64, 64, 64)`
+  6. Optional data augmentation (rotation, flipping)
 
-### Training Configuration
+- **Output Format**:
+  ```python
+  {
+      'volume': Tensor (1, D, H, W),      # CT volume
+      'boxes': Tensor (N, 6),              # 3D boxes (cx,cy,cz,w,h,d)
+      'labels': Tensor (N,),               # Class labels
+      'study_id': str                       # Patient/study identifier
+  }
+  ```
 
-```yaml
-training:
-  lr: 1e-4
-  weight_decay: 1e-4
-  epochs: 100
-  warmup_epochs: 5
-  clip_max_norm: 0.1
-  
-loss:
-  weight_ce: 2.0
-  weight_l1: 5.0
-  weight_giou: 2.0
-  eos_coef: 0.1
-  
-  cost_class: 1.0
-  cost_bbox: 5.0
-  cost_giou: 2.0
-```
+### Preprocessing Utilities
+
+**File:** `datasets/preprocessing.py`
+
+- **normalize_intensity()**: HU value normalization and clipping
+- **resize_volume()**: Trilinear interpolation for volume resizing
+- **mask_to_boxes_3d()**: Extract 3D bounding boxes from binary masks
+- **apply_augmentation_3d()**: Random 3D transformations
 
 ---
 
-## Design Decisions
+## Training Infrastructure
 
-### 1. Simplified Grounding Module
+**File:** `train.py`
 
-**Decision**: Use learnable pseudo-class token embeddings instead of full text encoder (BERT/CLIP)
+### Optimizer
+- **AdamW** with weight decay
+- Learning rate: 0.001
+- Weight decay: 0.0 (disabled for overfitting tests)
 
-**Rationale**:
-- Reduces model complexity for MVP
-- Maintains grounding-style architecture concept
-- Faster training and inference
-- Can be upgraded to full text encoder later
+### Learning Rate Scheduler
+- **Warmup**: Linear warmup for 5 epochs
+- **Cosine Annealing**: After warmup, cosine decay to 0
 
-### 2. 3D Window Attention
+### Training Loop
+1. Forward pass through model
+2. Hungarian matching between predictions and targets
+3. Compute combined loss (CE + L1 + GIoU)
+4. Backward pass and gradient clipping (max_norm=20.0)
+5. Optimizer step
+6. Logging and checkpointing
 
-**Decision**: 7×7×7 window size for Swin Transformer
-
-**Rationale**:
-- Balances local and global information
-- Manageable computational cost
-- Proven effective in 2D vision tasks
-
-### 3. Hungarian Matching
-
-**Decision**: Use Hungarian algorithm for bipartite matching
-
-**Rationale**:
-- Standard in DETR literature
-- Handles variable number of objects elegantly
-- Avoids need for anchor boxes and NMS
-- Enables set-based training
-
-### 4. Normalized Coordinates
-
-**Decision**: All box coordinates in [0, 1] range
-
-**Rationale**:
-- Scale-invariant across different volume sizes
-- Simplifies loss computation
-- Standard practice in detection models
-
-### 5. Grounding Fusion Placement
-
-**Decision**: Apply grounding fusion once before decoder layers, not within each layer
-
-**Rationale**:
-- **Simplicity for MVP**: Single fusion step is easier to implement and debug
-- **Computational efficiency**: Reduces overhead compared to per-layer fusion
-- **Sufficient for initial experiments**: Queries get semantic conditioning before refinement
-- **Upgrade path**: Can be extended to per-layer fusion in future iterations
-
-**Implementation Details**:
-- Fusion uses multi-head cross-attention (8 heads)
-- Applied after query initialization, before first decoder layer
-- Includes residual connection and layer normalization
-- Only active when `use_grounding_fusion=True`
-
-### 6. Query Initialization
-
-**Decision**: Initialize decoder queries with `query_embed.clone()` instead of zeros
-
-**Rationale**:
-- **Unique queries**: Each query has distinct learnable initialization
-- **Prevents collapse**: Zero initialization causes all queries to be identical
-- **Spatial specialization**: Different queries can learn to focus on different regions
-- **Standard practice**: Matches original DETR implementation
+### Checkpointing
+- **Best model**: Saved based on validation loss
+- **Periodic checkpoints**: Every 10 epochs
+- Saves: model weights, optimizer state, scheduler state, epoch, best loss
 
 ---
 
-## References
+## Evaluation Metrics
 
-**Key Papers**:
-1. Swin Transformer: Liu et al., "Swin Transformer: Hierarchical Vision Transformer using Shifted Windows", ICCV 2021
-2. DETR: Carion et al., "End-to-End Object Detection with Transformers", ECCV 2020
-3. Grounding DINO: Liu et al., "Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection", arXiv 2023
+**File:** `utils/metrics.py`
 
-**Implementation Details**:
-- Based on PyTorch 2.1.0
-- Uses standard transformer architecture from torch.nn
-- Custom 3D adaptations for medical imaging
+### 3D IoU Computation
+- `iou_3d()`: Computes intersection-over-union for 3D boxes
+
+### Mean Average Precision (mAP)
+- `compute_map()`: Calculates mAP at multiple IoU thresholds
+- Default thresholds: `[0.1, 0.2, 0.3, 0.4, 0.5]`
+- Per-class AP and mean across classes
+
+### Metrics Tracked
+- **Training loss**: Classification + Box L1 + GIoU
+- **Validation loss**: Same as training
+- **mAP**: At various IoU thresholds
+- **Per-class AP**: Individual class performance
 
 ---
 
-## Appendix: Module APIs
+## Visualization
 
-### SwinTransformer3D
-```python
-model = SwinTransformer3D(
-    in_channels=1,
-    patch_size=(4, 4, 4),
-    embed_dim=96,
-    depths=[2, 2, 6, 2],
-    num_heads=[3, 6, 12, 24],
-    window_size=(7, 7, 7)
-)
-# Input: (B, 1, D, H, W)
-# Output: (B, D', H', W', C)
-```
+**File:** `utils/visualization.py`
 
-### DETR3DHead
-```python
-head = DETR3DHead(
-    hidden_dim=256,
-    num_queries=100,
-    num_classes=5,
-    num_encoder_layers=6,
-    num_decoder_layers=6,
-    backbone_dim=768,
-    use_grounding_fusion=True  # Enable grounding fusion
-)
-# Input: 
-#   - features: (B, C, D', H', W') from backbone
-#   - class_tokens: (B, num_classes, hidden_dim) [optional]
-# Output: (pred_logits, pred_boxes)
-```
+### Visualization Functions
 
-### GroundingDETR3D
-```python
-model = build_model(config)
-# Input: (B, 1, D, H, W)
-# Output: dict(pred_logits, pred_boxes, class_tokens)
-# 
-# When use_grounding=True:
-#   - Generates class tokens
-#   - Applies grounding fusion before decoder
-#   - Returns class_tokens in output dict
-```
+1. **visualize_single_slice()**: Display single 2D slice with boxes
+   - Supports axial, sagittal, and coronal views
+   - Overlays predicted and ground truth boxes
+
+2. **visualize_multi_slice()**: Multi-slice grid visualization
+   - Shows 9 evenly-spaced slices
+   - Useful for understanding 3D structure
+
+3. **box_3d_to_2d_slice()**: Projects 3D boxes onto 2D slices
+   - Handles coordinate transformation per axis
+   - Draws boxes that intersect the slice plane
+
+### Output
+- **Single slice**: 2D image with bounding boxes
+- **Multi-slice**: 3×3 grid of slices
+- **Color coding**: 
+  - Green (solid): Ground truth boxes
+  - Red (dashed): Predicted boxes
+
+---
+
+## Model Parameters
+
+### Default Configuration
+- **Image size**: `(64, 64, 64)` voxels
+- **Batch size**: 2
+- **Num classes**: 5 (organ-specific injuries)
+- **Num queries**: 100
+- **Hidden dim**: 256
+- **Total trainable parameters**: ~30M (approximate)
+
+### Key Hyperparameters
+- **Backbone embed dim**: 96
+- **Backbone depths**: [2, 2, 6, 2]
+- **Encoder/Decoder layers**: 6 each
+- **Attention heads**: 8
+- **FFN hidden dim**: 2048
+- **Dropout**: 0.1 (training mode)
+
+---
+
+## Important Implementation Notes
+
+### ✅ Fully Implemented Components
+
+1. **3D Swin Transformer Backbone**
+   - Complete hierarchical feature extraction
+   - 4-stage architecture with patch merging
+   - Note: Uses full attention (windowing can be added later for efficiency)
+
+2. **Pseudo Text Feature Generator**
+   - Learnable class embeddings with projection
+   - Works well for fixed medical categories
+
+3. **Cross-Modality Decoder**
+   - 6-layer transformer encoder for image features
+   - 6-layer decoder with dual cross-attention
+   - Prediction heads for classification and box regression
+
+4. **Training Infrastructure**
+   - Hungarian matching and set-based loss
+   - AdamW optimizer with warmup + cosine scheduling
+   - Checkpoint management and logging
+
+5. **Evaluation & Visualization**
+   - 3D IoU and mAP computation
+   - Multi-slice visualization tools
+   - Interactive Jupyter notebooks
+
+### ⚠️ TODO/Placeholder Components
+
+1. **Feature Enhancer** (`feature_enhancer.py`)
+   - **Current**: Identity operation (pass-through)
+   - **TODO**: Implement bidirectional cross-attention
+     - Self-attention for each modality
+     - Image-to-Text and Text-to-Image cross-attention
+     - Multiple enhancement layers
+2. **Language-guided Query Selection** (`query_selection.py`)
+   - **Current**: Fixed learnable queries (standard DETR approach)
+   - **TODO**: Dynamic query generation
+     - Condition queries on enhanced text features
+     - Category-specific query initialization
+     - Query-text matching mechanism
+
+### Current Limitations
+
+1. **Window Attention**: Currently implements full attention instead of windowed attention
+   - Full attention is computationally expensive but works for MVP
+   - Window partitioning can be added for production (better memory efficiency)
+
+2. **Fixed Input Size**: Model expects `(64, 64, 64)` volumes
+   - Larger volumes require more memory
+   - Can be adjusted in config (may need batch size reduction)
+
+3. **Class Tokens**: Uses pseudo class tokens instead of actual text encoder
+   - Sufficient for fixed category detection (5 organ injury types)
+   - Real text encoding can be added for open-vocabulary tasks
+
+### Future Enhancements
+
+**High Priority:**
+- Complete Feature Enhancer implementation
+- Complete Query Selection mechanism
+
+**Medium Priority:**
+
+- Implement efficient 3D window attention
+- Support for multi-scale feature pyramids (FPN)
+- Dynamic number of object queries per image
+
+**Low Priority:**
+
+- Mixed precision training (FP16/BF16)
+- Model distillation for faster inference
+- TensorRT optimization for deployment
