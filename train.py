@@ -37,7 +37,7 @@ def create_dataloaders(config: dict):
         data_dir=data_cfg['dataset_path'],
         volume_size=tuple(data_cfg['image_size']),
         train=True,
-        augment=True
+        augment=data_cfg.get('augment', True)  # Read from config, default to True
     )
     
     # Split into train/val

@@ -2,10 +2,11 @@
 
 data:
   dataset_path: ./datasets
-  image_size: [64, 128, 128]  # D, H, W
+  image_size: [64, 64, 64]  # D, H, W
   batch_size: 2
   num_workers: 4
   train_split: 0.8
+  augment: true   # Disable if overfitting test
 
 model:
   num_classes: 5
@@ -18,15 +19,15 @@ model:
   num_decoder_layers: 6
   num_heads: 8
   dim_feedforward: 2048
-  dropout: 0.1
+  dropout: 0.1    # Disable if overfitting test
   use_grounding: true
 
 training:
   epochs: 100
   lr: 0.0001
-  weight_decay: 0.0001
+  weight_decay: 0.0001  # Disable if overfitting test
   warmup_epochs: 5
-  clip_max_norm: 0.1
+  clip_max_norm: 20.0
   log_interval: 10
   val_interval: 5
   save_interval: 10
@@ -35,7 +36,7 @@ loss:
   cost_class: 1.0
   cost_bbox: 5.0
   cost_giou: 2.0
-  weight_ce: 2.0
+  weight_ce: 1.0
   weight_l1: 5.0
   weight_giou: 2.0
   eos_coef: 0.1
