@@ -18,6 +18,7 @@ from datasets import RSNAVolumeDataset, collate_fn
 from models import build_model
 from models.sanity_check_model import build_sanity_check_model
 from models.losses import HungarianMatcher, SetCriterion
+from utils.logger import TrainingLogger
 
 
 def load_config(config_path: str) -> dict:
@@ -251,7 +252,7 @@ def validate(model, criterion, data_loader, device):
     return avg_loss, avg_losses_dict
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, config, filename):
+def save_checkpoint(model, optimizer, scheduler, epoch, config, filename, logger=None, is_best=False):
     """Save model checkpoint."""
     checkpoint = {
         'epoch': epoch,
@@ -266,7 +267,11 @@ def save_checkpoint(model, optimizer, scheduler, epoch, config, filename):
     
     filepath = checkpoint_dir / filename
     torch.save(checkpoint, filepath)
-    print(f"Checkpoint saved: {filepath}")
+    
+    if logger:
+        logger.log_checkpoint(str(filepath), epoch, is_best=is_best)
+    else:
+        print(f"Checkpoint saved: {filepath}")
 
 
 def main():
@@ -281,35 +286,50 @@ def main():
                        help='Debug mode (single batch)')
     parser.add_argument('--sanity-check', action='store_true',
                        help='Use large FC network for sanity check (overfitting test)')
+    parser.add_argument('--run-name', type=str, default=None,
+                       help='Name for this training run (default: timestamp)')
     
     args = parser.parse_args()
     
     # Load config
     config = load_config(args.config)
-    print(f"Config loaded from {args.config}")
-    print(yaml.dump(config, default_flow_style=False))
+    
+    # Initialize logger
+    logger = TrainingLogger(
+        log_dir=config['paths']['log_dir'],
+        config=config,
+        run_name=args.run_name,
+        config_path=args.config
+    )
+    
+    logger.info(f"Config loaded from {args.config}")
+    logger.info("Configuration:")
+    for line in yaml.dump(config, default_flow_style=False).split('\n'):
+        if line:
+            logger.info(f"  {line}")
     
     # Device
     device = torch.device(args.device)
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
     
     # Create dataloaders
-    print("\nCreating dataloaders...")
+    logger.info("Creating dataloaders...")
     train_loader, val_loader = create_dataloaders(config)
-    print(f"Train batches: {len(train_loader)}")
-    if val_loader:
-        print(f"Val batches: {len(val_loader)}")
+    logger.log_dataset_info(train_loader, val_loader)
     
     # Create model
-    print("\nBuilding model...")
+    logger.info("Building model...")
     if args.sanity_check:
-        print("⚠️  SANITY CHECK MODE: Using large FC network for overfitting test")
-        print("   This model should easily overfit training data.")
-        print("   If loss doesn't drop, there's an issue with the training pipeline.")
+        logger.info("⚠️  SANITY CHECK MODE: Using large FC network for overfitting test")
+        logger.info("   This model should easily overfit training data.")
+        logger.info("   If loss doesn't drop, there's an issue with the training pipeline.")
         model = build_sanity_check_model(config)
     else:
         model = build_model(config)
     model = model.to(device)
+    
+    # Log model info
+    logger.log_model_info(model)
     
     # Create criterion
     loss_cfg = config['loss']
@@ -339,18 +359,18 @@ def main():
     # Resume from checkpoint if specified
     start_epoch = 0
     if args.resume:
-        print(f"\nLoading checkpoint from {args.resume}")
+        logger.info(f"Loading checkpoint from {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        print(f"Resumed from epoch {start_epoch}")
+        logger.info(f"Resumed from epoch {start_epoch}")
     
     # Training loop
-    print("\n" + "="*60)
-    print("Starting training...")
-    print("="*60 + "\n")
+    logger.info("=" * 60)
+    logger.info("Starting training...")
+    logger.info("=" * 60)
     
     best_val_loss = float('inf')
     
@@ -362,58 +382,56 @@ def main():
             model, criterion, train_loader, optimizer, device, epoch, num_epochs, config
         )
         
-        # Print detailed statistics
-        print(f"Train Loss: {train_loss:.4f}")
-        print(f"  Loss Components:")
-        print(f"    loss_ce:    {train_losses.get('loss_ce', 0):.4f}")
-        print(f"    loss_l1:    {train_losses.get('loss_l1', 0):.4f}")
-        print(f"    loss_giou:  {train_losses.get('loss_giou', 0):.4f}")
-        print(f"  Prediction Stats:")
-        print(f"    box_min:    {train_losses.get('pred_box_min', 0):.4f}")
-        print(f"    box_max:    {train_losses.get('pred_box_max', 0):.4f}")
-        print(f"    box_mean:   {train_losses.get('pred_box_mean', 0):.4f}")
-        print(f"  Training Stats:")
-        print(f"    grad_norm:  {train_losses.get('grad_norm', 0):.4f}")
-        print(f"    lr:         {optimizer.param_groups[0]['lr']:.6f}")
+        # Log training metrics
+        logger.log_metrics(
+            epoch=epoch,
+            phase='train',
+            metrics=train_losses,
+            lr=optimizer.param_groups[0]['lr']
+        )
         
         # Validate
         if val_loader and (epoch + 1) % config['training']['val_interval'] == 0:
             val_loss, val_losses = validate(model, criterion, val_loader, device)
-            print(f"Val Loss: {val_loss:.4f}")
-            for k, v in val_losses.items():
-                print(f"  {k}: {v:.4f}")
+            
+            # Log validation metrics
+            logger.log_metrics(
+                epoch=epoch,
+                phase='val',
+                metrics=val_losses
+            )
             
             # Save best model
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 save_checkpoint(
                     model, optimizer, scheduler, epoch, config,
-                    'model_best.pth'
+                    'model_best.pth', logger, is_best=True
                 )
         
         # Save checkpoint periodically
         if (epoch + 1) % config['training']['save_interval'] == 0:
             save_checkpoint(
                 model, optimizer, scheduler, epoch, config,
-                f'checkpoint_epoch_{epoch+1}.pth'
+                f'checkpoint_epoch_{epoch+1}.pth', logger
             )
         
         # Step scheduler
         scheduler.step()
         
         if args.debug:
-            print("\nDebug mode: stopping after 1 epoch")
+            logger.info("Debug mode: stopping after 1 epoch")
             break
     
     # Save final model
     save_checkpoint(
         model, optimizer, scheduler, num_epochs-1, config,
-        'model_final.pth'
+        'model_final.pth', logger
     )
     
-    print("\n" + "="*60)
-    print("Training complete!")
-    print("="*60)
+    logger.info("=" * 60)
+    logger.info("Training complete!")
+    logger.info("=" * 60)
 
 
 if __name__ == '__main__':
