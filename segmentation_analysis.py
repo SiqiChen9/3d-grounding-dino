@@ -12,10 +12,11 @@ import matplotlib.patches as mpatches
 import os
 from PIL import Image
 import argparse
+import pydicom
 
 # Relative paths
 SEGMENTATION_PATH = "./datasets/segmentations/21057.nii"
-IMAGES_DIR = "./datasets/train_images/10004/21057"
+IMAGES_DIR = "./datasets/train_images/10004/21057_dcm"
 OUTPUT_DIR = "./visualizations"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -27,8 +28,18 @@ class SegmentationAnalyzer:
         self.seg_nib = nib.load(SEGMENTATION_PATH)
         self.seg_data = self.seg_nib.get_fdata()
 
-        jpeg_files = sorted([f for f in os.listdir(IMAGES_DIR) if f.endswith('.jpeg')])
-        self.image_indices = sorted([int(f.replace('.jpeg', '')) for f in jpeg_files])
+        #detect image format
+        all_files = os.listdir(IMAGES_DIR)
+        dcm_files = [f for f in all_files if f.endswith('.dcm')]
+        jpeg_files = [f for f in all_files if f.endswith('.jpeg')]
+
+        if dcm_files:
+            self.image_format = 'dcm'
+            self.image_indices = sorted([int(f.replace('.dcm', '')) for f in dcm_files])
+        else:
+            self.image_format = 'jpeg'
+            self.image_indices = sorted([int(f.replace('.jpeg', '')) for f in jpeg_files])
+
         self.min_index = min(self.image_indices)
         self.max_index = max(self.image_indices)
         self.num_frames = self.seg_data.shape[2]
@@ -118,13 +129,26 @@ class SegmentationAnalyzer:
         return f"{organ_name} ({status_str})"
 
     def load_image(self, image_index):
-        """Load JPEG image for given index."""
-        img_path = os.path.join(IMAGES_DIR, f"{image_index}.jpeg")
-        if os.path.exists(img_path):
-            img = np.array(Image.open(img_path))
-            if len(img.shape) == 2:
-                img = np.stack([img] * 3, axis=-1)
-            return img
+        """Load image for given index (supports JPEG and DICOM)."""
+        if self.image_format == 'dcm':
+            img_path = os.path.join(IMAGES_DIR, f"{image_index}.dcm")
+            if os.path.exists(img_path):
+                dcm = pydicom.dcmread(img_path)
+                img = dcm.pixel_array.astype(np.float32)
+                # normalize to 0-255
+                img = ((img - img.min()) / (img.max() - img.min()) * 255).astype(np.uint8)
+                # resize to 256x256
+                img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_LINEAR)
+                if len(img.shape) == 2:
+                    img = np.stack([img] * 3, axis=-1)
+                return img
+        else:
+            img_path = os.path.join(IMAGES_DIR, f"{image_index}.jpeg")
+            if os.path.exists(img_path):
+                img = np.array(Image.open(img_path))
+                if len(img.shape) == 2:
+                    img = np.stack([img] * 3, axis=-1)
+                return img
         return None
 
     def get_seg_frame_for_image(self, image_index):
