@@ -188,7 +188,28 @@ python train.py --debug
 - Logs saved to `logs/<run_name>/`
 - TensorBoard logs for visualization
 
-### 5. Visualize Predictions
+### 5. View Training Results
+
+After training, visualize the training metrics and loss curves:
+
+```bash
+# List all available training runs
+python utils/plot_metrics.py --log-dir ./logs --list
+
+# Plot metrics for a specific run
+python utils/plot_metrics.py --log-dir ./logs --run-name my_experiment
+
+# Save the plot to a file
+python utils/plot_metrics.py --log-dir ./logs --run-name my_experiment --save training_metrics.png
+```
+
+**The plot includes:**
+- Total loss (train and validation) with logarithmic scale
+- Loss components (CE, L1, GIoU) breakdown
+- Learning rate schedule over epochs
+- Gradient norm tracking
+
+### 6. Visualize Predictions
 
 Use the interactive notebook to view model predictions:
 
