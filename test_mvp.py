@@ -77,8 +77,7 @@ def test_model_forward():
                 'num_decoder_layers': 2,  # Reduced for testing
                 'num_heads': 4,
                 'dim_feedforward': 512,
-                'dropout': 0.1,
-                'use_grounding': True
+                'dropout': 0.1
             }
         }
         
@@ -204,8 +203,7 @@ def test_training_step():
                 'num_decoder_layers': 2,
                 'num_heads': 4,
                 'dim_feedforward': 512,
-                'dropout': 0.1,
-                'use_grounding': True
+                'dropout': 0.1
             }
         }
         

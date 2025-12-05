@@ -10,7 +10,7 @@ data:
 
 model:
   num_classes: 5
-  num_queries: 100
+  num_queries: 10
   hidden_dim: 256
   backbone_embed_dim: 96
   backbone_depths: [2, 2, 6, 2]
@@ -20,26 +20,25 @@ model:
   num_heads: 8
   dim_feedforward: 2048
   dropout: 0.1    # Disable if overfitting test
-  use_grounding: true
 
 training:
   epochs: 100
   lr: 0.0001
   weight_decay: 0.0001  # Disable if overfitting test
   warmup_epochs: 5
-  clip_max_norm: 20.0
+  clip_max_norm: 5.0
   log_interval: 10
   val_interval: 5
   save_interval: 10
 
 loss:
-  cost_class: 1.0
+  cost_class: 2.0
   cost_bbox: 5.0
   cost_giou: 2.0
   weight_ce: 1.0
   weight_l1: 5.0
   weight_giou: 2.0
-  eos_coef: 0.1
+  eos_coef: 0.01
 
 paths:
   checkpoint_dir: ./checkpoints
