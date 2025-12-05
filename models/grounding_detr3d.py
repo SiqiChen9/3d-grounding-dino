@@ -66,8 +66,8 @@ class GroundingDETR3D(nn.Module):
         hidden_dim: int = 256,
         # Backbone parameters
         backbone_embed_dim: int = 96,
-        backbone_depths: list = None,
-        backbone_num_heads: list = None,
+        backbone_depths: list = [2, 2, 6, 2],
+        backbone_num_heads: list = [3, 6, 12, 24],
         # Decoder parameters
         num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
@@ -78,12 +78,6 @@ class GroundingDETR3D(nn.Module):
         trainable_pseudo_features: bool = True
     ):
         super().__init__()
-        
-        if backbone_depths is None:
-            backbone_depths = [2, 2, 6, 2]
-        if backbone_num_heads is None:
-            backbone_num_heads = [3, 6, 12, 24]
-        
         self.num_classes = num_classes
         self.num_queries = num_queries
         self.hidden_dim = hidden_dim
