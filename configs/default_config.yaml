@@ -1,0 +1,45 @@
+# 3D Grounding-DETR Configuration
+
+data:
+  dataset_path: ./datasets
+  image_size: [64, 64, 64]  # D, H, W
+  batch_size: 2
+  num_workers: 4
+  train_split: 0.8
+  augment: true   # Disable if overfitting test
+
+model:
+  num_classes: 5
+  num_queries: 10
+  hidden_dim: 256
+  backbone_embed_dim: 96
+  backbone_depths: [2, 2, 6, 2]
+  backbone_num_heads: [3, 6, 12, 24]
+  num_encoder_layers: 6
+  num_decoder_layers: 6
+  num_heads: 8
+  dim_feedforward: 2048
+  dropout: 0.1    # Disable if overfitting test
+
+training:
+  epochs: 100
+  lr: 0.0001
+  weight_decay: 0.0001  # Disable if overfitting test
+  warmup_epochs: 5
+  clip_max_norm: 5.0
+  log_interval: 10
+  val_interval: 5
+  save_interval: 10
+
+loss:
+  cost_class: 2.0
+  cost_bbox: 5.0
+  cost_giou: 2.0
+  weight_ce: 1.0
+  weight_l1: 5.0
+  weight_giou: 2.0
+  eos_coef: 0.01
+
+paths:
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
