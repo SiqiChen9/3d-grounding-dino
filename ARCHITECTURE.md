@@ -58,17 +58,6 @@ The model follows this architecture from `grounding_detr3d.py`:
 - Classification logits: `(B, num_queries, num_classes+1)`
 - Bounding boxes: `(B, num_queries, 6)` in format `(cx, cy, cz, w, h, d)`
 
-### Implementation Status
-
-✅ **Fully Implemented:**
-- Component 1: Image Backbone (Swin3D)
-- Component 2: Pseudo Text Feature Generator
-- Component 3: Cross-Modality Decoder with prediction heads
-
-⚠️ **Placeholder/TODO:**
-- **Feature Enhancer**: Currently implements identity operation (pass-through). Planned: bidirectional cross-attention between image and text features
-- **Language-guided Query Selection**: Currently generates fixed learnable queries. Planned: dynamic query selection based on text features
-
 ---
 
 ## Component Details
@@ -80,23 +69,25 @@ The model follows this architecture from `grounding_detr3d.py`:
 **Purpose:** Extract hierarchical 3D features from CT volumes.
 
 **Key Modules:**
+
 - **PatchEmbed3D**: Converts input volume into 3D patches with embedding dimension 96
   - Input: `(B, 1, D, H, W)`
-  - Output: `(B, D', H', W', 96)` where `D'=D/4, H'=H/4, W'=W/4`
+  - Output: `(B, D', H', W', C')`
   
 - **SwinTransformerBlock3D**: Self-attention block with window-based mechanism
-  - Window Attention (currently full attention in MVP)
+  - Window Attention (currently **full attention** in MVP)
   - Feed-Forward Network (MLP)
   - Layer Normalization
   
 - **PatchMerging3D**: Hierarchical downsampling (reduces spatial dimensions by 2x, doubles channels)
 
 **Architecture:**
+
 - **4 stages** with depths `[2, 2, 6, 2]`
 - **Multi-head attention** with heads `[3, 6, 12, 24]`
 - **Window size**: `(7, 7, 7)` (for future windowed attention implementation)
-- **Output channels**: 768 (96 × 2³)
-- **Final feature size**: `(B, D/32, H/32, W/32, 768)` for input `(64, 64, 64)`
+- **Output channels**: 256
+- **Final feature size**: `(B, D/32, H/32, W/32, 256)` for input `(64, 64, 64)`
 
 **Note:** Current implementation uses full self-attention. Window partitioning for efficient local attention is planned for future optimization.
 
@@ -128,9 +119,10 @@ The model follows this architecture from `grounding_detr3d.py`:
 
 **Purpose:** Enhance image and text features through bidirectional interaction.
 
-**Current Status:** **Placeholder implementation** - currently acts as identity/pass-through operation.
+**Current Status:** **Placeholder implementation** - currently acts as simple encoder pass-through operation.
 
 **Planned Architecture:**
+
 - **Self-Attention Layers**: Refine features within each modality independently
 - **Bidirectional Cross-Attention**: Fuse information between image and text features
   - Image-to-Text attention: Help text features attend to relevant image regions
@@ -139,6 +131,7 @@ The model follows this architecture from `grounding_detr3d.py`:
 - **Multiple enhancement layers** for iterative refinement
 
 **Current Implementation:**
+
 ```python
 # Currently in grounding_detr3d.py forward():
 # Identity operation - features pass through unchanged
@@ -163,9 +156,10 @@ enhanced_text_features, enhanced_image_features = self.feature_enhancer(
 
 **Purpose:** Generate language-guided object queries for detection.
 
-**Current Status:** **Placeholder implementation** - generates fixed learnable queries.
+**Current Status:** **Placeholder implementation** - simple FNN pass-through.
 
 **Planned Architecture:**
+
 - **Content Queries**: Dynamic query generation based on enhanced text features
 - **Positional Queries**: Spatial prior encoding
 - **Query Modulation**: Adjust queries based on category information from text
@@ -185,19 +179,13 @@ enhanced_text_features, enhanced_image_features = self.feature_enhancer(
 
 ---
 
-### 5. **Cross-Modality Decoder**
+### 5. **Cross-Modality Decoder** ⚠️ TODO
 
 **File:** `models/cross_modality_decoder.py`
 
 **Purpose:** Core detection module that fuses multi-modal information for prediction.
 
 **Architecture:**
-
-#### Transformer Encoder (6 layers)
-- Processes flattened image features: `(D'×H'×W', B, C)`
-- **Self-Attention**: Captures spatial relationships
-- **Feed-Forward Network**: Non-linear transformation
-- **Positional Encoding**: Learnable 3D positional embeddings
 
 #### Cross-Modality Decoder Layers (6 layers)
 Each decoder layer contains three sub-modules:
@@ -219,7 +207,7 @@ Each decoder layer contains three sub-modules:
 Each sub-module is followed by:
 - **Residual Connection**
 - **Layer Normalization**
-- **Dropout** (0.1)
+- **Dropout**
 
 #### Prediction Heads
 
@@ -313,7 +301,7 @@ L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
 ### Optimizer
 - **AdamW** with weight decay
 - Learning rate: 0.001
-- Weight decay: 0.0 (disabled for overfitting tests)
+- Weight decay: 0.0001
 
 ### Learning Rate Scheduler
 - **Warmup**: Linear warmup for 5 epochs
@@ -323,7 +311,7 @@ L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
 1. Forward pass through model
 2. Hungarian matching between predictions and targets
 3. Compute combined loss (CE + L1 + GIoU)
-4. Backward pass and gradient clipping (max_norm=20.0)
+4. Backward pass and gradient clipping (max_norm=5.0)
 5. Optimizer step
 6. Logging and checkpointing
 
@@ -343,7 +331,6 @@ L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
 
 ### Mean Average Precision (mAP)
 - `compute_map()`: Calculates mAP at multiple IoU thresholds
-- Default thresholds: `[0.1, 0.2, 0.3, 0.4, 0.5]`
 - Per-class AP and mean across classes
 
 ### Metrics Tracked
@@ -365,7 +352,7 @@ L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
    - Overlays predicted and ground truth boxes
 
 2. **visualize_multi_slice()**: Multi-slice grid visualization
-   - Shows 9 evenly-spaced slices
+   - Shows some evenly-spaced slices
    - Useful for understanding 3D structure
 
 3. **box_3d_to_2d_slice()**: Projects 3D boxes onto 2D slices
@@ -374,104 +361,7 @@ L = λ_ce * L_ce + λ_l1 * L_l1 + λ_giou * L_giou
 
 ### Output
 - **Single slice**: 2D image with bounding boxes
-- **Multi-slice**: 3×3 grid of slices
+- **Multi-slice**: grid of slices
 - **Color coding**: 
-  - Green (solid): Ground truth boxes
-  - Red (dashed): Predicted boxes
-
----
-
-## Model Parameters
-
-### Default Configuration
-- **Image size**: `(64, 64, 64)` voxels
-- **Batch size**: 2
-- **Num classes**: 5 (organ-specific injuries)
-- **Num queries**: 100
-- **Hidden dim**: 256
-- **Total trainable parameters**: ~30M (approximate)
-
-### Key Hyperparameters
-- **Backbone embed dim**: 96
-- **Backbone depths**: [2, 2, 6, 2]
-- **Encoder/Decoder layers**: 6 each
-- **Attention heads**: 8
-- **FFN hidden dim**: 2048
-- **Dropout**: 0.1 (training mode)
-
----
-
-## Important Implementation Notes
-
-### ✅ Fully Implemented Components
-
-1. **3D Swin Transformer Backbone**
-   - Complete hierarchical feature extraction
-   - 4-stage architecture with patch merging
-   - Note: Uses full attention (windowing can be added later for efficiency)
-
-2. **Pseudo Text Feature Generator**
-   - Learnable class embeddings with projection
-   - Works well for fixed medical categories
-
-3. **Cross-Modality Decoder**
-   - 6-layer transformer encoder for image features
-   - 6-layer decoder with dual cross-attention
-   - Prediction heads for classification and box regression
-
-4. **Training Infrastructure**
-   - Hungarian matching and set-based loss
-   - AdamW optimizer with warmup + cosine scheduling
-   - Checkpoint management and logging
-
-5. **Evaluation & Visualization**
-   - 3D IoU and mAP computation
-   - Multi-slice visualization tools
-   - Interactive Jupyter notebooks
-
-### ⚠️ TODO/Placeholder Components
-
-1. **Feature Enhancer** (`feature_enhancer.py`)
-   - **Current**: Identity operation (pass-through)
-   - **TODO**: Implement bidirectional cross-attention
-     - Self-attention for each modality
-     - Image-to-Text and Text-to-Image cross-attention
-     - Multiple enhancement layers
-2. **Language-guided Query Selection** (`query_selection.py`)
-   - **Current**: Fixed learnable queries (standard DETR approach)
-   - **TODO**: Dynamic query generation
-     - Condition queries on enhanced text features
-     - Category-specific query initialization
-     - Query-text matching mechanism
-
-### Current Limitations
-
-1. **Window Attention**: Currently implements full attention instead of windowed attention
-   - Full attention is computationally expensive but works for MVP
-   - Window partitioning can be added for production (better memory efficiency)
-
-2. **Fixed Input Size**: Model expects `(64, 64, 64)` volumes
-   - Larger volumes require more memory
-   - Can be adjusted in config (may need batch size reduction)
-
-3. **Class Tokens**: Uses pseudo class tokens instead of actual text encoder
-   - Sufficient for fixed category detection (5 organ injury types)
-   - Real text encoding can be added for open-vocabulary tasks
-
-### Future Enhancements
-
-**High Priority:**
-- Complete Feature Enhancer implementation
-- Complete Query Selection mechanism
-
-**Medium Priority:**
-
-- Implement efficient 3D window attention
-- Support for multi-scale feature pyramids (FPN)
-- Dynamic number of object queries per image
-
-**Low Priority:**
-
-- Mixed precision training (FP16/BF16)
-- Model distillation for faster inference
-- TensorRT optimization for deployment
+  - dashed line: Ground truth boxes
+  - solid line: Predicted boxes
