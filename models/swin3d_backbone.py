@@ -42,6 +42,37 @@ class PatchEmbed3D(nn.Module):
         return x
 
 
+def window_partition(x: torch.Tensor, window_size: Tuple[int, int, int]) -> torch.Tensor:
+    """
+    Args:
+        x: (B, D, H, W, C)
+        window_size: (Wd, Wh, Ww)
+    Returns:
+        windows: (num_windows*B, Wd*Wh*Ww, C)
+    """
+    B, D, H, W, C = x.shape
+    wd, wh, ww = window_size
+    x = x.view(B, D // wd, wd, H // wh, wh, W // ww, ww, C)
+    windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, wd * wh * ww, C)
+    return windows
+
+
+def window_reverse(windows: torch.Tensor, window_size: Tuple[int, int, int], B: int, D: int, H: int, W: int) -> torch.Tensor:
+    """
+    Args:
+        windows: (num_windows*B, Wd*Wh*Ww, C)
+        window_size: (Wd, Wh, Ww)
+        B: Batch size of image
+        D, H, W: Spatial dimensions of image
+    Returns:
+        x: (B, D, H, W, C)
+    """
+    wd, wh, ww = window_size
+    x = windows.view(B, D // wd, H // wh, W // ww, wd, wh, ww, -1)
+    x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, D, H, W, -1)
+    return x
+
+
 class WindowAttention3D(nn.Module):
     """
     3D window-based multi-head self-attention.
