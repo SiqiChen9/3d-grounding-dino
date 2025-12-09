@@ -44,6 +44,7 @@ class PatchEmbed3D(nn.Module):
 
 def window_partition(x: torch.Tensor, window_size: Tuple[int, int, int]) -> torch.Tensor:
     """
+    Splits input into small non-overlapping 3D windows.
     Args:
         x: (B, D, H, W, C)
         window_size: (Wd, Wh, Ww)
@@ -59,6 +60,7 @@ def window_partition(x: torch.Tensor, window_size: Tuple[int, int, int]) -> torc
 
 def window_reverse(windows: torch.Tensor, window_size: Tuple[int, int, int], B: int, D: int, H: int, W: int) -> torch.Tensor:
     """
+    Reconstructs original tensor from windows.
     Args:
         windows: (num_windows*B, Wd*Wh*Ww, C)
         window_size: (Wd, Wh, Ww)
@@ -76,13 +78,6 @@ def window_reverse(windows: torch.Tensor, window_size: Tuple[int, int, int], B: 
 class WindowAttention3D(nn.Module):
     """
     3D window-based multi-head self-attention.
-    
-    TODO: This is currently implementing FULL ATTENTION (MVP implementation).
-    The actual window-based attention mechanism will be added in the future.
-    True window attention should:
-    1. Partition input into non-overlapping 3D windows
-    2. Apply attention within each window separately
-    3. Support shifted window partitioning for cross-window connections
     """
     
     def __init__(
@@ -105,28 +100,69 @@ class WindowAttention3D(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+
+        # Define relative position bias table
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1) * (2 * window_size[2] - 1), num_heads)
+        )
+
+        # Get pair-wise relative position index for each token inside the window
+        coords_d = torch.arange(self.window_size[0])
+        coords_h = torch.arange(self.window_size[1])
+        coords_w = torch.arange(self.window_size[2])
+        # indexing='ij' ensures (D, H, W) order
+        coords = torch.stack(torch.meshgrid([coords_d, coords_h, coords_w], indexing='ij')) 
+        coords_flatten = torch.flatten(coords, 1)
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()
+        
+        # Shift to start from 0
+        relative_coords[:, :, 0] += self.window_size[0] - 1
+        relative_coords[:, :, 1] += self.window_size[1] - 1
+        relative_coords[:, :, 2] += self.window_size[2] - 1
+        
+        relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
+        relative_coords[:, :, 1] *= (2 * self.window_size[2] - 1)
+        
+        relative_position_index = relative_coords.sum(-1)
+        self.register_buffer("relative_position_index", relative_position_index)
+
+        nn.init.trunc_normal_(self.relative_position_bias_table, std=.02)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
         Args:
-            x: (B, D*H*W, C)
+            x: (B*num_windows, N, C)
+            mask: (num_windows, N, N)
         Returns:
-            (B, D*H*W, C)
-        
-        TODO: Currently this performs full attention over all tokens.
-        Should implement window partitioning for efficient local attention.
+            (B*num_windows, N, C)
         """
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, B, num_heads, N, head_dim)
+        B_, N, C = x.shape
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         
-        # Scaled dot-product attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = F.softmax(attn, dim=-1)
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+
+        # Add relative position bias
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size[0] * self.window_size[1] * self.window_size[2],
+            self.window_size[0] * self.window_size[1] * self.window_size[2], -1)
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
+        attn = attn + relative_position_bias.unsqueeze(0)
+
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+            attn = F.softmax(attn, dim=-1)
+        else:
+            attn = F.softmax(attn, dim=-1)
+
         attn = self.attn_drop(attn)
         
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         
@@ -141,6 +177,7 @@ class SwinTransformerBlock3D(nn.Module):
         dim: int,
         num_heads: int,
         window_size: Tuple[int, int, int] = (7, 7, 7),
+        shift_size: Tuple[int, int, int] = (0, 0, 0),
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop: float = 0.0,
@@ -150,8 +187,14 @@ class SwinTransformerBlock3D(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.window_size = window_size
+        self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
-        
+
+        # Validate shift size（D, H, W）
+        assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
+        assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
+        assert 0 <= self.shift_size[2] < self.window_size[2], "shift_size must in 0-window_size"
+
         self.norm1 = nn.LayerNorm(dim)
         self.attn = WindowAttention3D(
             dim, window_size, num_heads,
@@ -176,18 +219,72 @@ class SwinTransformerBlock3D(nn.Module):
             (B, D, H, W, C)
         """
         B, D, H, W, C = x.shape
-        
-        # Reshape for attention
-        x_flat = x.view(B, D * H * W, C)
-        
-        # Window attention with residual
-        x_flat = x_flat + self.attn(self.norm1(x_flat))
-        
-        # MLP with residual
-        x_flat = x_flat + self.mlp(self.norm2(x_flat))
-        
-        # Reshape back
-        x = x_flat.view(B, D, H, W, C)
+        shortcut = x
+        x = self.norm1(x)
+
+        # Pad samples to be multiples of window size
+        pad_d = (self.window_size[0] - D % self.window_size[0]) % self.window_size[0]
+        pad_h = (self.window_size[1] - H % self.window_size[1]) % self.window_size[1]
+        pad_w = (self.window_size[2] - W % self.window_size[2]) % self.window_size[2]
+        x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h, 0, pad_d))
+        _, Dp, Hp, Wp, _ = x.shape
+
+        # Calculate attention mask for SW-MSA
+        if any(s > 0 for s in self.shift_size):
+            img_mask = torch.zeros((1, Dp, Hp, Wp, 1), device=x.device)
+            d_slices = (slice(0, -self.window_size[0]),
+                        slice(-self.window_size[0], -self.shift_size[0]),
+                        slice(-self.shift_size[0], None))
+            h_slices = (slice(0, -self.window_size[1]),
+                        slice(-self.window_size[1], -self.shift_size[1]),
+                        slice(-self.shift_size[1], None))
+            w_slices = (slice(0, -self.window_size[2]),
+                        slice(-self.window_size[2], -self.shift_size[2]),
+                        slice(-self.shift_size[2], None))
+            cnt = 0
+            for d in d_slices:
+                for h in h_slices:
+                    for w in w_slices:
+                        img_mask[:, d, h, w, :] = cnt
+                        cnt += 1
+
+            mask_windows = window_partition(img_mask, self.window_size)
+            mask_windows = mask_windows.view(-1, self.window_size[0] * self.window_size[1] * self.window_size[2])
+            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+            attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        else:
+            attn_mask = None
+
+        # Cyclic shift
+        if any(s > 0 for s in self.shift_size):
+            shifted_x = torch.roll(x, shifts=(-self.shift_size[0], -self.shift_size[1], -self.shift_size[2]), dims=(1, 2, 3))
+        else:
+            shifted_x = x
+
+        # Partition windows
+        x_windows = window_partition(shifted_x, self.window_size)  # (nW*B, window_size, C)
+        x_windows = x_windows.view(-1, self.window_size[0] * self.window_size[1] * self.window_size[2], C)  # (nW*B, N, C)
+
+        # W-MSA/SW-MSA
+        attn_windows = self.attn(x_windows, mask=attn_mask)  # (nW*B, N, C)
+
+        # Merge windows
+        attn_windows = attn_windows.view(-1, self.window_size[0], self.window_size[1], self.window_size[2], C)
+        shifted_x = window_reverse(attn_windows, self.window_size, B, Dp, Hp, Wp)  # (B, Dp, Hp, Wp, C)
+
+        # Reverse cyclic shift
+        if any(s > 0 for s in self.shift_size):
+            x = torch.roll(shifted_x, shifts=(self.shift_size[0], self.shift_size[1], self.shift_size[2]), dims=(1, 2, 3))
+        else:
+            x = shifted_x
+
+        # Remove padding
+        if pad_d > 0 or pad_h > 0 or pad_w > 0:
+            x = x[:, :D, :H, :W, :].contiguous()
+
+        # FFN
+        x = shortcut + x
+        x = x + self.mlp(self.norm2(x))
         
         return x
 
@@ -272,12 +369,13 @@ class SwinTransformer3D(nn.Module):
                     dim=int(embed_dim * 2 ** i_layer),
                     num_heads=num_heads[i_layer],
                     window_size=window_size,
+                    shift_size=(0, 0, 0) if (i % 2 == 0) else (window_size[0] // 2, window_size[1] // 2, window_size[2] // 2),
                     mlp_ratio=mlp_ratio,
                     qkv_bias=qkv_bias,
                     drop=drop_rate,
                     attn_drop=attn_drop_rate
                 )
-                for _ in range(depths[i_layer])
+                for i in range(depths[i_layer])
             ])
             self.layers.append(layer)
 
