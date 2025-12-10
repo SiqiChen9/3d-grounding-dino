@@ -351,12 +351,14 @@ class SwinTransformer3D(nn.Module):
         qkv_bias: bool = True,
         drop_rate: float = 0.0,
         attn_drop_rate: float = 0.0,
-        out_channels: int = None
+        out_channels: int = None,
+        out_indices: Tuple[int, ...] = (3,)
     ):
         super().__init__()
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
         self.mlp_ratio = mlp_ratio
+        self.out_indices = out_indices
 
         # Patch embedding
         self.patch_embed = PatchEmbed3D(patch_size, in_channels, embed_dim)
@@ -400,21 +402,32 @@ class SwinTransformer3D(nn.Module):
             x: (B, C, D, H, W)
         Returns:
             (B, D', H', W', C') - final stage features
+            OR
+            Tuple of features if out_indices has multiple values
         """
         # Patch embedding
         x = self.patch_embed(x)  # (B, D', H', W', C)
 
+        outs = []
         # Apply Swin blocks
         for i in range(self.num_layers):
             # Apply blocks in this layer
             for block in self.layers[i]:
                 x = block(x)
 
+            # Record output if in out_indices
+            if i in self.out_indices:
+                outs.append(x)
+
             # Downsample
             x = self.downsample_layers[i](x)
 
-        # Apply output projection if specified
-        if self.output_proj is not None:
-            x = self.output_proj(x)  # (B, D', H', W', out_channels)
-
-        return x
+        # Compatibility mode: if only requesting the last layer (default behavior)
+        if self.out_indices == (self.num_layers - 1,):
+            out = outs[0]
+            # Apply output projection if specified
+            if self.output_proj is not None:
+                out = self.output_proj(out)  # (B, D', H', W', out_channels)
+            return out
+        
+        return tuple(outs)
