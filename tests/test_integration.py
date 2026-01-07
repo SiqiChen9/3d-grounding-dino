@@ -182,7 +182,8 @@ class TestModuleInterfaceCompatibility:
             embed_dim=48,
             depths=[1, 1],
             num_heads=[2, 4],
-            out_channels=hidden_dim
+            out_channels=hidden_dim,
+            out_indices=(1,)  # depths=[1,1] has 2 stages: 0 and 1
         ).to(device)
         
         enhancer = FeatureEnhancer(hidden_dim=hidden_dim).to(device)

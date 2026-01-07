@@ -100,7 +100,8 @@ class GroundingDETR3D(nn.Module):
             qkv_bias=True,
             drop_rate=dropout,
             attn_drop_rate=dropout,
-            out_channels=hidden_dim  # Project from 768 to hidden_dim (256)
+            out_channels=hidden_dim,  # Project from 768 to hidden_dim (256)
+            out_indices=(len(backbone_depths) - 1,)  # Always output the last stage
         )
         
         # ═══════════════════════════════════════════════════════
