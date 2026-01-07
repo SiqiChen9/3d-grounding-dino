@@ -91,10 +91,15 @@ class TestWindowAttention3D:
     def test_output_shape(self, device):
         """Test that output shape matches input shape."""
         batch_size = 2
-        seq_len = 64  # D*H*W tokens
+        window_size = (4, 4, 4)  # 指定窗口大小
+        seq_len = 4 * 4 * 4  # = 64，与窗口大小匹配
         dim = 96
         
-        model = WindowAttention3D(dim=dim, num_heads=4).to(device)
+        model = WindowAttention3D(
+            dim=dim, 
+            num_heads=4,
+            window_size=window_size  # 传入匹配的窗口大小
+        ).to(device)
         x = torch.randn(batch_size, seq_len, dim, device=device)
         output = model(x)
         
@@ -103,6 +108,7 @@ class TestWindowAttention3D:
     def test_different_num_heads(self, device):
         """Test with different number of attention heads."""
         batch_size = 1
+        window_size = (4, 4, 2)  # 4*4*2 = 32
         seq_len = 32
         dim = 96
         
@@ -110,14 +116,15 @@ class TestWindowAttention3D:
             # dim must be divisible by num_heads
             if dim % num_heads != 0:
                 continue
-            model = WindowAttention3D(dim=dim, num_heads=num_heads).to(device)
+            model = WindowAttention3D(dim=dim, num_heads=num_heads, window_size=window_size).to(device)
             x = torch.randn(batch_size, seq_len, dim, device=device)
             output = model(x)
             assert output.shape == x.shape
     
     def test_gradient_flow(self, device):
         """Test that gradients flow properly."""
-        model = WindowAttention3D(dim=64, num_heads=4).to(device)
+        window_size = (2, 2, 4)  # 2*2*4 = 16
+        model = WindowAttention3D(dim=64, num_heads=4, window_size=window_size).to(device)
         x = torch.randn(1, 16, 64, device=device, requires_grad=True)
         
         output = model(x)
@@ -240,7 +247,8 @@ class TestSwinTransformer3D:
             embed_dim=48,
             depths=[1, 1],
             num_heads=[2, 4],
-            out_channels=out_channels
+            out_channels=out_channels,
+            out_indices=(1,)  # depths=[1,1] means 2 stages: 0 and 1
         ).to(device)
         
         x = torch.randn(batch_size, 1, 16, 32, 32, device=device)
@@ -253,7 +261,8 @@ class TestSwinTransformer3D:
         model = SwinTransformer3D(
             embed_dim=48,
             depths=[1, 1],
-            num_heads=[2, 4]
+            num_heads=[2, 4],
+            out_indices=(1,)  # depths=[1,1] means 2 stages: 0 and 1
         ).to(device)
         
         x = torch.randn(1, 1, 16, 32, 32, device=device, requires_grad=True)
@@ -272,7 +281,8 @@ class TestSwinTransformer3D:
         model = SwinTransformer3D(
             embed_dim=48,
             depths=[1],
-            num_heads=[2]
+            num_heads=[2],
+            out_indices=(0,)  # depths=[1] means 1 stage: only stage 0
         ).to(device)
         model.eval()
         
