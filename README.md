@@ -224,6 +224,36 @@ jupyter notebook predictions_visualization.ipynb
 - mAP calculation at multiple IoU thresholds
 - Per-class Average Precision analysis
 
+### 7. Run Unit Tests
+
+Verify code correctness with the comprehensive test suite:
+
+```bash
+conda activate 3d-detection
+pytest tests/ -v
+```
+
+**Test Coverage (138 tests):**
+
+| Category        | Files | Coverage                                           |
+| --------------- | ----- | -------------------------------------------------- |
+| **Models**      | 7     | All core modules (backbone, decoder, losses, etc.) |
+| **Utils**       | 2     | Metrics (IoU, mAP) and visualization               |
+| **Datasets**    | 1     | Preprocessing and augmentation                     |
+| **Integration** | 1     | Full pipeline forward/backward pass                |
+
+**Test specific modules:**
+
+```bash
+# Test specific module
+pytest tests/models/test_swin3d_backbone.py -v
+
+# Test integration only
+pytest tests/test_integration.py -v
+
+# Show detailed output
+pytest tests/ -v --tb=short
+```
 ---
 
 ## Configuration
@@ -324,6 +354,23 @@ training:
 │   ├── logger.py                   # Training logger
 │   ├── plot_metrics.py             # Metric plotting
 │   └── __init__.py
+│
+├── tests/                          # Unit and integration tests
+│   ├── conftest.py                 # Shared pytest fixtures
+│   ├── test_integration.py         # Integration tests
+│   ├── models/                     # Model unit tests
+│   │   ├── test_swin3d_backbone.py
+│   │   ├── test_text_feature_generator.py
+│   │   ├── test_feature_enhancer.py
+│   │   ├── test_query_selection.py
+│   │   ├── test_cross_modality_decoder.py
+│   │   ├── test_losses.py
+│   │   └── test_grounding_detr3d.py
+│   ├── utils/                      # Utils unit tests
+│   │   ├── test_metrics.py
+│   │   └── test_visualization.py
+│   └── datasets/                   # Datasets unit tests
+│       └── test_preprocessing.py
 │
 ├── train.py                        # Main training script
 ├── test_mvp.py                     # Component test suite
