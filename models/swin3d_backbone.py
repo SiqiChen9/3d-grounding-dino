@@ -190,10 +190,14 @@ class SwinTransformerBlock3D(nn.Module):
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
 
-        # Validate shift size（D, H, W）
+        # Validate shift size (D, H, W)
         assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[2] < self.window_size[2], "shift_size must in 0-window_size"
+
+        # Dynamic caching for attention mask (performance optimization)
+        self.attn_mask = None
+        self.last_input_shape = None
 
         self.norm1 = nn.LayerNorm(dim)
         self.attn = WindowAttention3D(
@@ -229,29 +233,41 @@ class SwinTransformerBlock3D(nn.Module):
         x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h, 0, pad_d))
         _, Dp, Hp, Wp, _ = x.shape
 
-        # Calculate attention mask for SW-MSA
+        # Calculate attention mask for SW-MSA (with dynamic caching)
         if any(s > 0 for s in self.shift_size):
-            img_mask = torch.zeros((1, Dp, Hp, Wp, 1), device=x.device)
-            d_slices = (slice(0, -self.window_size[0]),
-                        slice(-self.window_size[0], -self.shift_size[0]),
-                        slice(-self.shift_size[0], None))
-            h_slices = (slice(0, -self.window_size[1]),
-                        slice(-self.window_size[1], -self.shift_size[1]),
-                        slice(-self.shift_size[1], None))
-            w_slices = (slice(0, -self.window_size[2]),
-                        slice(-self.window_size[2], -self.shift_size[2]),
-                        slice(-self.shift_size[2], None))
-            cnt = 0
-            for d in d_slices:
-                for h in h_slices:
-                    for w in w_slices:
-                        img_mask[:, d, h, w, :] = cnt
-                        cnt += 1
+            current_shape = (Dp, Hp, Wp)
+            
+            # Check if we can reuse cached mask
+            if self.attn_mask is not None and self.last_input_shape == current_shape:
+                # Reuse cached mask (fast path)
+                attn_mask = self.attn_mask
+            else:
+                # Compute new mask (slow path - only runs when input shape changes)
+                img_mask = torch.zeros((1, Dp, Hp, Wp, 1), device=x.device)
+                d_slices = (slice(0, -self.window_size[0]),
+                            slice(-self.window_size[0], -self.shift_size[0]),
+                            slice(-self.shift_size[0], None))
+                h_slices = (slice(0, -self.window_size[1]),
+                            slice(-self.window_size[1], -self.shift_size[1]),
+                            slice(-self.shift_size[1], None))
+                w_slices = (slice(0, -self.window_size[2]),
+                            slice(-self.window_size[2], -self.shift_size[2]),
+                            slice(-self.shift_size[2], None))
+                cnt = 0
+                for d in d_slices:
+                    for h in h_slices:
+                        for w in w_slices:
+                            img_mask[:, d, h, w, :] = cnt
+                            cnt += 1
 
-            mask_windows = window_partition(img_mask, self.window_size)
-            mask_windows = mask_windows.view(-1, self.window_size[0] * self.window_size[1] * self.window_size[2])
-            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-            attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+                mask_windows = window_partition(img_mask, self.window_size)
+                mask_windows = mask_windows.view(-1, self.window_size[0] * self.window_size[1] * self.window_size[2])
+                attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+                attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+                
+                # Cache the computed mask and shape
+                self.attn_mask = attn_mask
+                self.last_input_shape = current_shape
         else:
             attn_mask = None
 
@@ -352,13 +368,14 @@ class SwinTransformer3D(nn.Module):
         drop_rate: float = 0.0,
         attn_drop_rate: float = 0.0,
         out_channels: int = None,
-        out_indices: Tuple[int, ...] = (3,)
+        out_indices: Tuple[int, ...] = None # If None, only the last layer is returned
     ):
         super().__init__()
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
         self.mlp_ratio = mlp_ratio
-        self.out_indices = out_indices
+        # Default to the last stage if out_indices is not provided
+        self.out_indices = out_indices if out_indices is not None else (self.num_layers - 1,)
 
         # Patch embedding
         self.patch_embed = PatchEmbed3D(patch_size, in_channels, embed_dim)
