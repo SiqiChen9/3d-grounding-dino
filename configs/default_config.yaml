@@ -7,6 +7,7 @@ data:
   num_workers: 4
   train_split: 0.8
   augment: true   # Disable if overfitting test
+  image_format: dcm # dcm for DICOM, jpeg for JPEG
 
 model:
   num_classes: 5
