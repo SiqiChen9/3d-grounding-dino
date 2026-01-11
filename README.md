@@ -61,7 +61,9 @@ The current MVP is **complete and functional**. All core components have been im
 
 ### ✅ Data Pipeline
 - **NIfTI segmentation loading** with automatic 3D bounding box extraction
-- **JPEG slice stacking** into volumetric arrays
+- **DICOM/JPEG slice loading** into volumetric arrays
+  - `image_format='dcm'`: Load DICOM files with HU conversion (default, for full training)
+  - `image_format='jpeg'`: Load JPEG files (for small-scale testing)
 - **Intensity normalization** for CT Hounsfield units
 - **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
 - **Data augmentation** with 3D rotations and flips (configurable)
@@ -272,6 +274,9 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 - **num_workers**: DataLoader workers (default: 4)
 - **train_split**: Train/validation split ratio (default: 0.8)
 - **augment**: Enable/disable data augmentation (default: false)
+- **image_format**: Image format to load (default: `dcm`)
+  - `dcm`: Load DICOM files with HU conversion (for full training)
+  - `jpeg`: Load JPEG files (for small-scale testing)
 
 ### Model Configuration
 - **num_classes**: Number of target classes (default: 5)
