@@ -35,7 +35,7 @@ def create_dataloaders(config: dict):
     # Create full dataset
     full_dataset = RSNAVolumeDataset(
         data_dir=data_cfg['dataset_path'],
-        volume_size=tuple(data_cfg['image_size']),
+        target_width=data_cfg['target_width'],
         train=True,
         augment=data_cfg.get('augment', True),  # Read from config, default to True
         image_format=data_cfg.get('image_format', 'dcm'),  # 'dcm' or 'jpeg'

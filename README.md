@@ -269,7 +269,7 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 
 ### Data Configuration
 - **dataset_path**: Path to dataset directory
-- **image_size**: Target volume size `[D, H, W]` (default: `[64, 64, 64]`)
+- **target_width**: Target width (2nd dimension) for proportional scaling (default: `64`). All dimensions scale proportionally based on this value.
 - **batch_size**: Training batch size (default: 2)
 - **num_workers**: DataLoader workers (default: 4)
 - **train_split**: Train/validation split ratio (default: 0.8)
@@ -318,7 +318,7 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 ```yaml
 data:
   dataset_path: ./datasets
-  image_size: [64, 64, 64]
+  target_width: 64  # Proportional scaling based on width
   batch_size: 2
   augment: false
 

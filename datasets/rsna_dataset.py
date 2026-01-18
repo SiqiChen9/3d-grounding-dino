@@ -41,7 +41,7 @@ class RSNAVolumeDataset(Dataset):
         data_dir: str,
         segmentation_dir: str = "segmentations",
         image_dir: str = "train_images",
-        volume_size: Tuple[int, int, int] = (64, 128, 128),  # D, H, W
+        target_width: int = 64,  # Target width (2nd dimension), other dimensions scale proportionally
         train: bool = True,
         augment: bool = False,
         num_samples: Optional[int] = None,
@@ -52,7 +52,7 @@ class RSNAVolumeDataset(Dataset):
             data_dir: Root directory containing datasets
             segmentation_dir: Directory with .nii segmentation files
             image_dir: Directory with DICOM/JPEG slices
-            volume_size: Target volume size (D, H, W)
+            target_width: Target width (2nd dimension), all dimensions scale proportionally
             train: Training or validation mode
             augment: Apply data augmentation
             num_samples: Limit dataset size (for debugging)
@@ -61,7 +61,7 @@ class RSNAVolumeDataset(Dataset):
         self.data_dir = data_dir
         self.segmentation_dir = os.path.join(data_dir, segmentation_dir)
         self.image_dir = os.path.join(data_dir, image_dir)
-        self.volume_size = volume_size
+        self.target_width = target_width
         self.train = train
         self.augment = augment
         self.image_format = image_format.lower()
@@ -323,10 +323,21 @@ class RSNAVolumeDataset(Dataset):
         # Normalize intensity based on image format
         volume = self._normalize_volume(volume, format_used)
         
-        # Resize to target size
-        if volume.shape != self.volume_size:
-            volume = resize_volume(volume, self.volume_size, order=1)
-            mask = resize_volume(mask, self.volume_size, order=0)  # Nearest for labels
+        # Proportionally resize based on target_width (2nd dimension)
+        # Original shape: (D, H, W) where W is the width (2nd dimension in NIfTI after transpose)
+        original_width = volume.shape[1]  # Width is the 2nd dimension (H in D, H, W)
+        scale_factor = self.target_width / original_width
+        
+        # Calculate target size maintaining aspect ratio
+        target_size = (
+            max(1, int(round(volume.shape[0] * scale_factor))),  # D
+            self.target_width,  # H (target width)
+            max(1, int(round(volume.shape[2] * scale_factor)))   # W
+        )
+        
+        if volume.shape != target_size:
+            volume = resize_volume(volume, target_size, order=1)
+            mask = resize_volume(mask, target_size, order=0)  # Nearest for labels
             # Ensure mask is also float32 for consistency
             mask = mask.astype(np.float32)
         
@@ -370,19 +381,51 @@ class RSNAVolumeDataset(Dataset):
 
 def collate_fn(batch: List[Dict]) -> Dict:
     """
-    Custom collate function for batching.
+    Custom collate function for batching with variable-sized volumes.
     
-    Since volumes have the same size but different numbers of boxes,
-    we keep boxes as a list.
+    Since volumes may have different sizes due to proportional scaling,
+    we pad them to the maximum size in the batch.
+    Boxes are kept as a list since each sample has different numbers of boxes.
     """
-    volumes = torch.stack([item['volume'] for item in batch], dim=0)
+    # Find maximum dimensions in the batch
+    max_d = max(item['volume'].shape[1] for item in batch)
+    max_h = max(item['volume'].shape[2] for item in batch)
+    max_w = max(item['volume'].shape[3] for item in batch)
+    
+    # Pad volumes to the same size
+    padded_volumes = []
+    masks = []  # Mask indicating valid (non-padded) regions
+    
+    for item in batch:
+        vol = item['volume']  # (1, D, H, W)
+        d, h, w = vol.shape[1], vol.shape[2], vol.shape[3]
+        
+        # Create padded volume (zero-padding)
+        padded = torch.zeros(1, max_d, max_h, max_w, dtype=vol.dtype)
+        padded[:, :d, :h, :w] = vol
+        padded_volumes.append(padded)
+        
+        # Create mask (1 for valid, 0 for padded)
+        mask = torch.zeros(max_d, max_h, max_w, dtype=torch.bool)
+        mask[:d, :h, :w] = True
+        masks.append(mask)
+    
+    volumes = torch.stack(padded_volumes, dim=0)  # (B, 1, max_D, max_H, max_W)
+    masks = torch.stack(masks, dim=0)  # (B, max_D, max_H, max_W)
+    
     boxes = [item['boxes'] for item in batch]
     labels = [item['labels'] for item in batch]
     study_ids = [item['study_id'] for item in batch]
     
+    # Store original sizes for reference
+    original_sizes = [(item['volume'].shape[1], item['volume'].shape[2], item['volume'].shape[3]) 
+                      for item in batch]
+    
     return {
-        'volumes': volumes,  # (B, 1, D, H, W)
-        'boxes': boxes,      # List of (Ni, 6) tensors
-        'labels': labels,    # List of (Ni,) tensors
-        'study_ids': study_ids
+        'volumes': volumes,           # (B, 1, max_D, max_H, max_W)
+        'masks': masks,               # (B, max_D, max_H, max_W) - True for valid regions
+        'boxes': boxes,               # List of (Ni, 6) tensors
+        'labels': labels,             # List of (Ni,) tensors
+        'study_ids': study_ids,
+        'original_sizes': original_sizes  # List of (D, H, W) tuples
     }

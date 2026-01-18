@@ -2,7 +2,7 @@
 
 data:
   dataset_path: ./datasets
-  image_size: [64, 64, 64]  # D, H, W
+  target_width: 64  # Target width (2nd dimension), other dimensions scale proportionally
   batch_size: 16
   num_workers: 12
   train_split: 0.8

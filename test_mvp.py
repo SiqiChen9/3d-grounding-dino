@@ -24,7 +24,7 @@ def test_data_loading():
     try:
         dataset = RSNAVolumeDataset(
             data_dir='./datasets',
-            volume_size=(64, 128, 128),
+            target_width=64,
             train=True,
             augment=False,
             num_samples=1,
