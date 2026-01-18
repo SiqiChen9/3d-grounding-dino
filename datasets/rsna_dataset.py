@@ -82,10 +82,21 @@ class RSNAVolumeDataset(Dataset):
                 if f.endswith('.nii') or f.endswith('.nii.gz')
             ])
         
+        # Filter out segmentation files that don't have corresponding images
+        valid_seg_files = []
+        for seg_file in self.seg_files:
+            study_id = seg_file.replace('.nii.gz', '').replace('.nii', '')
+            if self._find_image_directory(study_id) is not None:
+                valid_seg_files.append(seg_file)
+            else:
+                print(f"Excluding {study_id}: no corresponding image data found")
+        
+        self.seg_files = valid_seg_files
+        
         if num_samples is not None:
             self.seg_files = self.seg_files[:num_samples]
         
-        print(f"Found {len(self.seg_files)} segmentation files")
+        print(f"Found {len(self.seg_files)} segmentation files with corresponding images")
         print(f"Image format: {self.image_format}")
     
     def __len__(self) -> int:
@@ -97,7 +108,7 @@ class RSNAVolumeDataset(Dataset):
         
         Args:
             volume: Image volume (D, H, W)
-            format_used: The image format ('jpeg', 'dcm', or 'dummy')
+            format_used: The image format ('jpeg' or 'dcm')
             
         Returns:
             Normalized volume with values in [0, 1]
@@ -115,9 +126,6 @@ class RSNAVolumeDataset(Dataset):
             HU_MAX = 1000   # Bone
             volume = np.clip(volume, HU_MIN, HU_MAX)
             volume = (volume - HU_MIN) / (HU_MAX - HU_MIN)
-        else:
-            # Dummy data, already zeros
-            pass
             
         return volume
     
@@ -131,7 +139,7 @@ class RSNAVolumeDataset(Dataset):
         Returns:
             volume: Image volume (D, H, W)
             mask: Segmentation mask (D, H, W)
-            format_used: The image format that was loaded ('jpeg', 'dcm', or 'dummy')
+            format_used: The image format that was loaded ('jpeg' or 'dcm')
         """
         # Load segmentation
         seg_path = os.path.join(self.segmentation_dir, seg_file)
@@ -186,15 +194,15 @@ class RSNAVolumeDataset(Dataset):
             
         Returns:
             volume: Image volume (D, H, W)
-            format_used: The image format that was loaded ('jpeg', 'dcm', or 'dummy')
+            format_used: The image format that was loaded ('jpeg' or 'dcm')
+            
+        Raises:
+            FileNotFoundError: If images cannot be found or loaded
         """
         if self.image_format == 'jpeg':
             volume, format_used = self._try_load_jpeg(study_id, target_shape)
         elif self.image_format == 'dcm':
             volume, format_used = self._try_load_dcm(study_id, target_shape)
-        else:
-            volume = np.zeros(target_shape, dtype=np.float32)
-            format_used = 'dummy'
             
         return volume, format_used
     
@@ -208,13 +216,15 @@ class RSNAVolumeDataset(Dataset):
             
         Returns:
             volume: Image volume (D, H, W)
-            format_used: 'jpeg' if successful, 'dummy' otherwise
+            format_used: 'jpeg'
+            
+        Raises:
+            FileNotFoundError: If image directory or JPEG files not found
         """
         image_study_dir = self._find_image_directory(study_id)
         
         if image_study_dir is None:
-            print(f"Warning: No image directory found for {study_id}, using dummy data")
-            return np.zeros(target_shape, dtype=np.float32), 'dummy'
+            raise FileNotFoundError(f"No image directory found for study {study_id}")
         
         # Load JPEG slices
         jpeg_files = sorted([
@@ -224,8 +234,7 @@ class RSNAVolumeDataset(Dataset):
         )
         
         if len(jpeg_files) == 0:
-            print(f"Warning: No JPEG files found in {image_study_dir}, using dummy data")
-            return np.zeros(target_shape, dtype=np.float32), 'dummy'
+            raise FileNotFoundError(f"No JPEG files found in {image_study_dir}")
         
         # Load images
         images = []
@@ -253,13 +262,15 @@ class RSNAVolumeDataset(Dataset):
             
         Returns:
             volume: Image volume (D, H, W) with proper HU values
-            format_used: 'dcm' if successful, 'dummy' otherwise
+            format_used: 'dcm'
+            
+        Raises:
+            FileNotFoundError: If image directory or DCM files not found
         """
         image_study_dir = self._find_image_directory(study_id)
         
         if image_study_dir is None:
-            print(f"Warning: No DCM images found for {study_id}, using dummy data")
-            return np.zeros(target_shape, dtype=np.float32), 'dummy'
+            raise FileNotFoundError(f"No DCM images found for study {study_id}")
         
         # Load DICOM slices
         dcm_files = sorted([
@@ -269,8 +280,7 @@ class RSNAVolumeDataset(Dataset):
         )
         
         if len(dcm_files) == 0:
-            print(f"Warning: No DCM files in {image_study_dir}, using dummy data")
-            return np.zeros(target_shape, dtype=np.float32), 'dummy'
+            raise FileNotFoundError(f"No DCM files in {image_study_dir}")
         
         # Load DICOM images and extract pixel data with HU conversion
         slices = []
