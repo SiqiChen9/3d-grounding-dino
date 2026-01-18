@@ -351,7 +351,8 @@ class RSNAVolumeDataset(Dataset):
             labels = np.zeros((1,), dtype=np.int64)
         else:
             boxes = np.array([b['box'] for b in boxes_data], dtype=np.float32)
-            labels = np.array([b['label'] for b in boxes_data], dtype=np.int64)
+            # Convert labels from 1-5 to 0-4 for model compatibility
+            labels = np.array([b['label'] - 1 for b in boxes_data], dtype=np.int64)
         
         # Apply augmentation if enabled
         if self.augment and self.train:
