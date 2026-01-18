@@ -299,7 +299,7 @@ def visualize_single_slice(
     gt_boxes: Optional[List[np.ndarray]] = None,
     gt_labels: Optional[List[int]] = None,
     axis: str = 'axial',
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
     figsize: Tuple[int, int] = (12, 6)
 ) -> plt.Figure:
     """
@@ -315,7 +315,7 @@ def visualize_single_slice(
         gt_boxes: List of ground truth boxes (normalized)
         gt_labels: List of ground truth labels
         axis: View axis
-        score_threshold: Minimum score to display predictions
+        score_threshold: Minimum score to display predictions (default: 0.0, show all)
         figsize: Figure size
     
     Returns:
@@ -427,7 +427,7 @@ def visualize_multi_slice(
     gt_labels: Optional[List[int]] = None,
     num_slices: int = 9,
     axis: str = 'axial',
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
     figsize: Tuple[int, int] = (15, 10)
 ) -> plt.Figure:
     """
@@ -443,7 +443,7 @@ def visualize_multi_slice(
         gt_labels: List of ground truth labels
         num_slices: Number of slices to show
         axis: View axis
-        score_threshold: Minimum score to display
+        score_threshold: Minimum score to display (default: 0.0, show all)
         figsize: Figure size
     
     Returns:
