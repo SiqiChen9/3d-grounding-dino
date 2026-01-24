@@ -2,10 +2,13 @@
 
 data:
   dataset_path: ./datasets
-  target_width: 64  # Target width (2nd dimension), other dimensions scale proportionally
-  batch_size: 16
+  target_width: 128  # Target width (2nd dimension), other dimensions scale proportionally
+  batch_size: 2
   num_workers: 12
-  train_split: 0.8
+  train_split: 0.7   # 70% for training
+  val_split: 0.15    # 15% for validation
+  test_split: 0.15   # 15% for testing
+  random_seed: 42    # Fixed seed for reproducible splits
   augment: true   # Disable if overfitting test
   image_format: dcm # dcm for DICOM, jpeg for JPEG
   persistent_workers: true
