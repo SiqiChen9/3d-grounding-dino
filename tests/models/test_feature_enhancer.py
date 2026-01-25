@@ -48,8 +48,8 @@ class TestFeatureEnhancer:
             
             assert enhanced_image.shape == (N, batch_size, hidden_dim)
     
-    def test_text_features_unchanged(self, device, batch_size, num_classes, hidden_dim):
-        """Test that text features pass through unchanged (current implementation)."""
+    def test_text_features_enhanced(self, device, batch_size, num_classes, hidden_dim):
+        """Test that text features are enhanced (full implementation with cross-attention)."""
         model = FeatureEnhancer(hidden_dim=hidden_dim).to(device)
         model.eval()
         
@@ -59,8 +59,8 @@ class TestFeatureEnhancer:
         with torch.no_grad():
             enhanced_text, _ = model(text_features, image_features)
         
-        # Current implementation: text features are unchanged
-        assert torch.allclose(enhanced_text, text_features)
+        # Full implementation: text features are enhanced through cross-attention
+        assert not torch.allclose(enhanced_text, text_features)
     
     def test_image_features_enhanced(self, device, batch_size, num_classes, hidden_dim):
         """Test that image features are enhanced (not identical to input)."""
