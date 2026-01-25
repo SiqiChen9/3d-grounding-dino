@@ -15,6 +15,7 @@ model:
   backbone_embed_dim: 96
   backbone_depths: [2, 2, 6, 2]
   backbone_num_heads: [3, 6, 12, 24]
+  backbone_window_size: [7, 7, 7]
   num_encoder_layers: 6
   num_decoder_layers: 6
   num_heads: 8
