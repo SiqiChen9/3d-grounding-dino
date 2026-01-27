@@ -360,8 +360,11 @@ class RSNAVolumeDataset(Dataset):
                          for box, label in zip(boxes, labels)]
             volume, boxes_list = apply_augmentation_3d(
                 volume, boxes_list,
-                flip_prob=0.5,
-                rotate_prob=0.3,
+                rotate_prob=0.5,
+                rotate_range=30.0,
+                scale_prob=0.5,
+                scale_range=(0.85, 1.15),
+                elastic_prob=0.3,
                 intensity_jitter=0.1
             )
             boxes = np.array([b['box'] for b in boxes_list], dtype=np.float32)

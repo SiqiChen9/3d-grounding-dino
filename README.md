@@ -66,7 +66,7 @@ The current MVP is **complete and functional**. All core components have been im
   - `image_format='jpeg'`: Load JPEG files (for small-scale testing)
 - **Intensity normalization** for CT Hounsfield units
 - **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
-- **Data augmentation** with 3D rotations and flips (configurable)
+- **Data augmentation** with 3D rotations (±30°), scaling, elastic deformation, and intensity jitter (configurable, no flipping for anatomical correctness)
 - **PyTorch Dataset integration** with custom collate function for variable-length boxes
 - **Train/validation split** with configurable ratio
 

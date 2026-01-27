@@ -5,7 +5,7 @@ Tests:
 - normalize_intensity: value range [0, 1], windowing
 - resize_volume: output size
 - mask_to_boxes_3d: bounding box format, normalization
-- apply_augmentation_3d: flip, rotation, intensity jitter
+- apply_augmentation_3d: rotation, scale, crop, elastic deformation, intensity jitter
 """
 import pytest
 import numpy as np
@@ -193,8 +193,9 @@ class TestApplyAugmentation3D:
         for _ in range(10):
             aug_volume, aug_boxes = apply_augmentation_3d(
                 volume, boxes, 
-                flip_prob=0.5, 
-                rotate_prob=0.3
+                rotate_prob=0.5, 
+                rotate_range=30.0,
+                scale_prob=0.5
             )
             
             for box_dict in aug_boxes:
@@ -209,8 +210,9 @@ class TestApplyAugmentation3D:
         
         aug_volume, _ = apply_augmentation_3d(
             volume, boxes,
-            flip_prob=0.0,
             rotate_prob=0.0,
+            scale_prob=0.0,
+            elastic_prob=0.0,
             intensity_jitter=0.1
         )
         
@@ -224,8 +226,9 @@ class TestApplyAugmentation3D:
         
         aug_volume, aug_boxes = apply_augmentation_3d(
             volume, boxes,
-            flip_prob=0.0,
             rotate_prob=0.0,
+            scale_prob=0.0,
+            elastic_prob=0.0,
             intensity_jitter=0.0
         )
         
