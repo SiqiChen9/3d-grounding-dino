@@ -14,7 +14,7 @@ This project implements a **3D Grounding-DETR framework** for volumetric CT scan
 - ✅ **3D Swin Transformer backbone** with hierarchical feature extraction
   - 目前仍有若干优化方向：
     1. 启用多尺度输出（接口已预留好，须在其他文件做适配）：这可以提高对微小病灶的检测。但是会显著增加显存占用和计算量。
-    2. 解决 Mask 的重复计算：这可以减少显存占用和计算量。但由于当前每个 epoch 内的 batch 较小，推测无法显著优化；另外若输入图像分辨率不一致需要做适配。
+    2. ~~解决 Mask 的重复计算：这可以减少显存占用和计算量。但由于当前每个 epoch 内的 batch 较小，推测无法显著优化；另外若输入图像分辨率不一致需要做适配。~~
     3. 缺乏 Gradient Checkpointing：这可以减少内存占用。但鉴于目前模型对内存的占用仍可接受，暂该不做优化。
     4. 频繁的 Padding 和 Unpadding（并不能优化很多性能）。#性价比不高
     5. 使用 Flash Attention 加速：提高内存读取效率。但鉴于 Swin 的特性（Relative Position Bias）无法直接调用。#较难
