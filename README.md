@@ -61,9 +61,11 @@ The current MVP is **complete and functional**. All core components have been im
 
 ### ✅ Data Pipeline
 - **NIfTI segmentation loading** with automatic 3D bounding box extraction
-- **DICOM/JPEG slice loading** into volumetric arrays
-  - `image_format='dcm'`: Load DICOM files with HU conversion (default, for full training)
+- **DICOM/JPEG/NumPy data loading** into volumetric arrays
+  - `image_format='numpy'`: Load pre-converted .npz files (fastest, recommended)
+  - `image_format='dcm'`: Load DICOM files with HU conversion
   - `image_format='jpeg'`: Load JPEG files (for small-scale testing)
+- **NumPy converter tool** for pre-processing DICOM to .npz format (~4x faster I/O)
 - **Intensity normalization** for CT Hounsfield units
 - **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
 - **Data augmentation** with 3D rotations (±30°), scaling, elastic deformation, and intensity jitter (configurable, no flipping for anatomical correctness)
@@ -274,8 +276,9 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 - **num_workers**: DataLoader workers (default: 4)
 - **train_split**: Train/validation split ratio (default: 0.8)
 - **augment**: Enable/disable data augmentation (default: false)
-- **image_format**: Image format to load (default: `dcm`)
-  - `dcm`: Load DICOM files with HU conversion (for full training)
+- **image_format**: Image format to load (default: `numpy`)
+  - `numpy`: Load pre-converted .npz files (fastest, recommended for training). If no .npz files are found, automatically converts DICOM files to .npz format and then loads them. 
+  - `dcm`: Load DICOM files with HU conversion
   - `jpeg`: Load JPEG files (for small-scale testing)
 
 ### Model Configuration

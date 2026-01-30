@@ -1,6 +1,7 @@
 """
 RSNA CT Volume Dataset for 3D object detection.
 Loads NIfTI segmentations and DICOM/JPEG slices, converts to 3D bounding boxes.
+Supports pre-converted NumPy format for faster I/O.
 """
 import os
 import numpy as np
@@ -41,39 +42,83 @@ class RSNAVolumeDataset(Dataset):
         data_dir: str,
         segmentation_dir: str = "segmentations",
         image_dir: str = "train_images",
+        numpy_dir: str = "numpy_volumes",
         target_width: int = 64,  # Target width (2nd dimension), other dimensions scale proportionally
         train: bool = True,
         augment: bool = False,
         num_samples: Optional[int] = None,
-        image_format: str = "dcm",  # 'dcm' or 'jpeg'
+        image_format: str = "dcm",  # 'dcm', 'jpeg', or 'numpy'
     ):
         """
         Args:
             data_dir: Root directory containing datasets
             segmentation_dir: Directory with .nii segmentation files
             image_dir: Directory with DICOM/JPEG slices
+            numpy_dir: Directory with pre-converted .npz files
             target_width: Target width (2nd dimension), all dimensions scale proportionally
             train: Training or validation mode
             augment: Apply data augmentation
             num_samples: Limit dataset size (for debugging)
-            image_format: Image format to load ('dcm' or 'jpeg')
+            image_format: Image format to load ('dcm', 'jpeg', or 'numpy')
         """
         self.data_dir = data_dir
         self.segmentation_dir = os.path.join(data_dir, segmentation_dir)
         self.image_dir = os.path.join(data_dir, image_dir)
+        self.numpy_dir = os.path.join(data_dir, numpy_dir)
         self.target_width = target_width
         self.train = train
         self.augment = augment
         self.image_format = image_format.lower()
         
         # Validate image format
-        if self.image_format not in ['jpeg', 'dcm']:
-            raise ValueError(f"image_format must be 'dcm' or 'jpeg', got '{image_format}'")
+        if self.image_format not in ['jpeg', 'dcm', 'numpy']:
+            raise ValueError(f"image_format must be 'dcm', 'jpeg', or 'numpy', got '{image_format}'")
         
         # Check pydicom availability for DCM format
         if self.image_format == 'dcm' and not PYDICOM_AVAILABLE:
             raise ImportError("pydicom is required for DCM format. Install with: pip install pydicom")
         
+        # Handle numpy format
+        if self.image_format == 'numpy':
+            self._init_numpy_format(num_samples)
+        else:
+            self._init_legacy_format(num_samples)
+    
+    def _init_numpy_format(self, num_samples: Optional[int] = None):
+        """Initialize dataset using pre-converted NumPy files."""
+        # Check if numpy_volumes directory exists and has files
+        if not os.path.exists(self.numpy_dir):
+            os.makedirs(self.numpy_dir, exist_ok=True)
+        
+        # Get available .npz files
+        npz_files = sorted([
+            f for f in os.listdir(self.numpy_dir)
+            if f.endswith('.npz')
+        ])
+        
+        if len(npz_files) == 0:
+            print(f"No .npz files found in {self.numpy_dir}")
+            print("Converting DICOM to NumPy format...")
+            self._convert_to_numpy()
+            # Re-scan after conversion
+            npz_files = sorted([
+                f for f in os.listdir(self.numpy_dir)
+                if f.endswith('.npz')
+            ])
+        
+        # Use study_id as the identifier (same as seg_files for compatibility)
+        self.seg_files = [f.replace('.npz', '.nii') for f in npz_files]
+        self.npz_files = npz_files
+        
+        if num_samples is not None:
+            self.seg_files = self.seg_files[:num_samples]
+            self.npz_files = self.npz_files[:num_samples]
+        
+        print(f"Found {len(self.npz_files)} NumPy volumes")
+        print(f"Image format: {self.image_format}")
+    
+    def _init_legacy_format(self, num_samples: Optional[int] = None):
+        """Initialize dataset using DICOM/JPEG files (legacy format)."""
         # Find all segmentation files
         self.seg_files = []
         if os.path.exists(self.segmentation_dir):
@@ -99,6 +144,15 @@ class RSNAVolumeDataset(Dataset):
         print(f"Found {len(self.seg_files)} segmentation files with corresponding images")
         print(f"Image format: {self.image_format}")
     
+    def _convert_to_numpy(self):
+        """Convert DICOM files to NumPy format."""
+        from utils.numpy_converter import convert_dataset
+        convert_dataset(
+            config_path='configs/default_config.yaml',
+            output_subdir='numpy_volumes',
+            force_reconvert=False,
+        )
+    
     def __len__(self) -> int:
         return len(self.seg_files)
     
@@ -118,8 +172,8 @@ class RSNAVolumeDataset(Dataset):
         if format_used == 'jpeg':
             # JPEG images are in [0, 255], normalize to [0, 1]
             volume = volume / 255.0
-        elif format_used == 'dcm':
-            # DICOM images are in Hounsfield Units (HU)
+        elif format_used in ['dcm', 'numpy']:
+            # DICOM/NumPy images are in Hounsfield Units (HU)
             # Typical CT window for soft tissue: [-100, 300] HU
             # Clip to a reasonable range and normalize to [0, 1]
             HU_MIN = -1000  # Air
@@ -128,6 +182,29 @@ class RSNAVolumeDataset(Dataset):
             volume = (volume - HU_MIN) / (HU_MAX - HU_MIN)
             
         return volume
+    
+    def _transform_segmentation(self, seg_data: np.ndarray) -> np.ndarray:
+        """
+        Apply transformations to segmentation mask to match image orientation.
+        
+        This is applied uniformly regardless of source format (NIfTI or NumPy).
+        
+        Args:
+            seg_data: Segmentation in original NIfTI orientation (H, W, D)
+            
+        Returns:
+            Transformed segmentation (D, H, W)
+        """
+        # 1. Rotate segmentation to match image orientation
+        seg_data = np.rot90(seg_data, k=1)
+        
+        # 2. Flip depth dimension
+        seg_data = seg_data[:, :, ::-1]
+
+        # 3. Transpose from (H, W, D) to (D, H, W)
+        seg_data = np.transpose(seg_data, (2, 0, 1))
+        
+        return seg_data
     
     def load_nifti_volume(self, seg_file: str) -> Tuple[np.ndarray, np.ndarray, str]:
         """
@@ -146,14 +223,8 @@ class RSNAVolumeDataset(Dataset):
         seg_nib = nib.load(seg_path)
         seg_data = seg_nib.get_fdata()
 
-        # 1. Rotate segmentation to match image orientation
-        seg_data = np.rot90(seg_data, k=1)
-        
-        # 2. Flip depth dimension
-        seg_data = seg_data[:, :, ::-1]
-
-        # 3. Transpose from (H, W, D) to (D, H, W)
-        seg_data = np.transpose(seg_data, (2, 0, 1))
+        # Apply transformations to match image orientation
+        seg_data = self._transform_segmentation(seg_data)
         
         # Get study ID from filename (assuming format: study_id.nii)
         study_id = seg_file.replace('.nii.gz', '').replace('.nii', '')
@@ -162,6 +233,29 @@ class RSNAVolumeDataset(Dataset):
         volume, image_format_used = self._load_image_volume(study_id, seg_data.shape)
         
         return volume, seg_data, image_format_used
+    
+    def load_numpy_volume(self, npz_file: str) -> Tuple[np.ndarray, np.ndarray, str]:
+        """
+        Load volume and mask from pre-converted NumPy file.
+        
+        Args:
+            npz_file: NumPy filename (e.g., '10000.npz')
+        
+        Returns:
+            volume: Image volume (D, H, W)
+            mask: Segmentation mask (D, H, W)
+            format_used: 'numpy'
+        """
+        npz_path = os.path.join(self.numpy_dir, npz_file)
+        data = np.load(npz_path, allow_pickle=True)
+        
+        volume = data['volume'].astype(np.float32)  # (D, H, W) with HU values
+        mask = data['mask']  # (H, W, D) - original NIfTI orientation
+        
+        # Apply same transformations as NIfTI
+        mask = self._transform_segmentation(mask)
+        
+        return volume, mask, 'numpy'
     
     def _find_image_directory(self, study_id: str) -> Optional[str]:
         """
@@ -317,8 +411,12 @@ class RSNAVolumeDataset(Dataset):
         seg_file = self.seg_files[idx]
         study_id = seg_file.replace('.nii.gz', '').replace('.nii', '')
         
-        # Load volume and mask
-        volume, mask, format_used = self.load_nifti_volume(seg_file)
+        # Load volume and mask based on format
+        if self.image_format == 'numpy':
+            npz_file = f"{study_id}.npz"
+            volume, mask, format_used = self.load_numpy_volume(npz_file)
+        else:
+            volume, mask, format_used = self.load_nifti_volume(seg_file)
         
         # Normalize intensity based on image format
         volume = self._normalize_volume(volume, format_used)
