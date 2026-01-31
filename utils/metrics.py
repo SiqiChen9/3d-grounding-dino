@@ -2,7 +2,6 @@
 Evaluation metrics for 3D object detection.
 Includes IoU computation and mAP calculation.
 """
-import torch
 import numpy as np
 from typing import List, Dict, Tuple
 
@@ -40,14 +39,15 @@ def compute_iou_3d(box1: np.ndarray, box2: np.ndarray) -> float:
     return iou
 
 
-def compute_ap(
+def compute_tp_fp_per_sample(
     pred_boxes: np.ndarray,
     pred_scores: np.ndarray,
     gt_boxes: np.ndarray,
     iou_threshold: float = 0.5
-) -> float:
+) -> Tuple[np.ndarray, np.ndarray, int]:
     """
-    Compute Average Precision for a single class.
+    Compute TP/FP for predictions against GT boxes for a single sample.
+    Predictions are matched to GT in descending score order (greedy matching).
     
     Args:
         pred_boxes: (N, 6) predicted boxes
@@ -56,28 +56,28 @@ def compute_ap(
         iou_threshold: IoU threshold for positive match
     
     Returns:
-        Average Precision
+        Tuple of (tp_array, scores_array, num_gt) - tp/scores sorted by descending score
     """
-    if len(pred_boxes) == 0:
-        return 0.0
-    
-    if len(gt_boxes) == 0:
-        return 0.0
-    
-    # Sort by score
-    sorted_indices = np.argsort(-pred_scores)
-    pred_boxes = pred_boxes[sorted_indices]
-    pred_scores = pred_scores[sorted_indices]
-    
-    # Match predictions to ground truth
     num_gt = len(gt_boxes)
-    matched_gt = np.zeros(num_gt, dtype=bool)
     
+    if len(pred_boxes) == 0:
+        return np.array([]), np.array([]), num_gt
+    
+    if num_gt == 0:
+        # All predictions are false positives
+        sorted_idx = np.argsort(-pred_scores)
+        return np.zeros(len(pred_boxes)), pred_scores[sorted_idx], 0
+    
+    # Sort predictions by score (descending) - high confidence first
+    sorted_idx = np.argsort(-pred_scores)
+    pred_boxes = pred_boxes[sorted_idx]
+    pred_scores = pred_scores[sorted_idx]
+    
+    # Match predictions to ground truth (greedy: high score first)
+    matched_gt = np.zeros(num_gt, dtype=bool)
     tp = np.zeros(len(pred_boxes))
-    fp = np.zeros(len(pred_boxes))
     
     for i, pred_box in enumerate(pred_boxes):
-        # Find best matching GT box
         best_iou = 0
         best_gt_idx = -1
         
@@ -92,27 +92,10 @@ def compute_ap(
         
         # Check if match is good enough
         if best_iou >= iou_threshold and best_gt_idx >= 0:
-            if not matched_gt[best_gt_idx]:
-                tp[i] = 1
-                matched_gt[best_gt_idx] = True
-            else:
-                fp[i] = 1
-        else:
-            fp[i] = 1
+            tp[i] = 1
+            matched_gt[best_gt_idx] = True
     
-    # Compute precision and recall
-    tp_cumsum = np.cumsum(tp)
-    fp_cumsum = np.cumsum(fp)
-    
-    recalls = tp_cumsum / num_gt
-    precisions = tp_cumsum / (tp_cumsum + fp_cumsum + 1e-6)
-    
-    # Compute AP (area under PR curve)
-    ap = 0
-    for i in range(len(precisions) - 1):
-        ap += (recalls[i+1] - recalls[i]) * precisions[i+1]
-    
-    return ap
+    return tp, pred_scores.copy(), num_gt
 
 
 def compute_map(
@@ -124,6 +107,16 @@ def compute_map(
     """
     Compute mean Average Precision across classes and IoU thresholds.
     
+    Algorithm:
+    1. For each class and IoU threshold:
+       a. For each sample, compute TP/FP by matching predictions to GT
+          (greedy matching: highest score prediction matched first)
+       b. Aggregate TP/FP across all samples
+       c. Sort globally by score, compute cumulative TP/FP
+       d. Compute Precision = TP / (TP + FP), Recall = TP / total_GT
+       e. AP = area under PR curve
+    2. mAP = mean of AP across classes
+    
     Args:
         predictions: List of dicts with 'boxes', 'scores', 'labels'
         ground_truths: List of dicts with 'boxes', 'labels'
@@ -131,7 +124,7 @@ def compute_map(
         iou_thresholds: List of IoU thresholds to evaluate
     
     Returns:
-        Dict with mAP scores
+        Dict with mAP scores at each threshold and overall mAP
     """
     results = {}
     
@@ -139,47 +132,71 @@ def compute_map(
         aps = []
         
         for class_id in range(num_classes):
-            # Gather all predictions and GT for this class
-            class_pred_boxes = []
-            class_pred_scores = []
-            class_gt_boxes = []
+            all_tp = []
+            all_scores = []
+            total_gt = 0
             
             for pred, gt in zip(predictions, ground_truths):
-                # Predictions for this class
+                # Filter by class
                 pred_mask = pred['labels'] == class_id
-                if pred_mask.sum() > 0:
-                    class_pred_boxes.append(pred['boxes'][pred_mask])
-                    class_pred_scores.append(pred['scores'][pred_mask])
-                
-                # Ground truth for this class
                 gt_mask = gt['labels'] == class_id
-                if gt_mask.sum() > 0:
-                    class_gt_boxes.append(gt['boxes'][gt_mask])
+                
+                pred_boxes_class = pred['boxes'][pred_mask]
+                pred_scores_class = pred['scores'][pred_mask]
+                gt_boxes_class = gt['boxes'][gt_mask]
+                
+                # Compute TP/FP for this sample
+                tp, scores, num_gt = compute_tp_fp_per_sample(
+                    pred_boxes_class,
+                    pred_scores_class,
+                    gt_boxes_class,
+                    iou_threshold=iou_thresh
+                )
+                
+                if len(tp) > 0:
+                    all_tp.append(tp)
+                    all_scores.append(scores)
+                total_gt += num_gt
             
-            if len(class_pred_boxes) == 0 or len(class_gt_boxes) == 0:
+            # No GT for this class - skip
+            if total_gt == 0:
                 continue
             
-            # Concatenate
-            class_pred_boxes = np.concatenate(class_pred_boxes, axis=0)
-            class_pred_scores = np.concatenate(class_pred_scores, axis=0)
-            class_gt_boxes = np.concatenate(class_gt_boxes, axis=0)
+            # No predictions for this class - AP is 0
+            if len(all_tp) == 0:
+                aps.append(0.0)
+                continue
             
-            # Compute AP
-            ap = compute_ap(
-                class_pred_boxes,
-                class_pred_scores,
-                class_gt_boxes,
-                iou_threshold=iou_thresh
-            )
+            # Aggregate across samples
+            all_tp = np.concatenate(all_tp)
+            all_scores = np.concatenate(all_scores)
+            
+            # Sort globally by score (descending)
+            sorted_idx = np.argsort(-all_scores)
+            all_tp = all_tp[sorted_idx]
+            
+            # Compute PR curve
+            tp_cumsum = np.cumsum(all_tp)
+            fp_cumsum = np.cumsum(1 - all_tp)
+            
+            recalls = tp_cumsum / total_gt
+            precisions = tp_cumsum / (tp_cumsum + fp_cumsum)
+            
+            # AP = area under PR curve (using trapezoidal rule)
+            # Prepend (0, 1) point for proper area calculation
+            recalls = np.concatenate([[0], recalls])
+            precisions = np.concatenate([[1], precisions])
+            
+            # Ensure precision is monotonically decreasing (for interpolation)
+            for i in range(len(precisions) - 2, -1, -1):
+                precisions[i] = max(precisions[i], precisions[i + 1])
+            
+            # Compute area under curve
+            ap = np.sum((recalls[1:] - recalls[:-1]) * precisions[1:])
             aps.append(ap)
         
-        # Mean AP
-        if len(aps) > 0:
-            map_score = np.mean(aps)
-        else:
-            map_score = 0.0
-        
-        results[f'mAP@{iou_thresh}'] = map_score
+        # Mean AP across classes
+        results[f'mAP@{iou_thresh}'] = np.mean(aps) if len(aps) > 0 else 0.0
     
     # Overall mAP (average across thresholds)
     results['mAP'] = np.mean([results[f'mAP@{t}'] for t in iou_thresholds])
