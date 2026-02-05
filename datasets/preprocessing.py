@@ -88,14 +88,16 @@ def resize_volume(
 
 def mask_to_boxes_3d(
     mask: np.ndarray,
-    min_volume: int = 100
+    min_volume: int = 50,
+    merge_per_label: bool = True
 ) -> List[dict]:
     """
     Convert segmentation mask to 3D bounding boxes.
     
     Args:
         mask: Binary or multi-label mask (D, H, W)
-        min_volume: Minimum volume (voxels) for valid boxes
+        min_volume: Minimum volume (voxels) for valid components (noise filter)
+        merge_per_label: If True, merge all boxes of same label into one
     
     Returns:
         List of boxes, each dict with:
@@ -155,6 +157,26 @@ def mask_to_boxes_3d(
                 'box': box_normalized,
                 'label': int(label)
             })
+    
+    # Merge boxes per label if requested
+    if merge_per_label and boxes:
+        merged = {}
+        for b in boxes:
+            label = b['label']
+            box = b['box']  # cx, cy, cz, w, h, d
+            x1, y1, z1 = box[0] - box[3]/2, box[1] - box[4]/2, box[2] - box[5]/2
+            x2, y2, z2 = box[0] + box[3]/2, box[1] + box[4]/2, box[2] + box[5]/2
+            if label not in merged:
+                merged[label] = [x1, y1, z1, x2, y2, z2]
+            else:
+                merged[label] = [
+                    min(merged[label][0], x1), min(merged[label][1], y1), min(merged[label][2], z1),
+                    max(merged[label][3], x2), max(merged[label][4], y2), max(merged[label][5], z2)
+                ]
+        boxes = [{'box': np.array([
+            (m[0]+m[3])/2, (m[1]+m[4])/2, (m[2]+m[5])/2,
+            m[3]-m[0], m[4]-m[1], m[5]-m[2]
+        ]), 'label': l} for l, m in merged.items()]
     
     return boxes
 
