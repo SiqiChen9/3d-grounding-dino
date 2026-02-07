@@ -37,7 +37,8 @@ def create_dataloaders(config: dict):
         data_dir=data_cfg['dataset_path'],
         volume_size=tuple(data_cfg['image_size']),
         train=True,
-        augment=data_cfg.get('augment', True)  # Read from config, default to True
+        augment=data_cfg.get('augment', True),  # Read from config, default to True
+        image_format=data_cfg.get('image_format', 'dcm'),  # 'dcm' or 'jpeg'
     )
     
     # Split into train/val
@@ -54,14 +55,21 @@ def create_dataloaders(config: dict):
         train_dataset = full_dataset
         val_dataset = None
     
+    # DataLoader settings for better performance
+    num_workers = data_cfg.get('num_workers', 0)
+    persistent_workers = data_cfg.get('persistent_workers', False) and num_workers > 0
+    prefetch_factor = data_cfg.get('prefetch_factor', 2) if num_workers > 0 else None
+    
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=data_cfg['batch_size'],
         shuffle=True,
-        num_workers=data_cfg.get('num_workers', 0),
+        num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor
     )
     
     val_loader = None
@@ -70,9 +78,11 @@ def create_dataloaders(config: dict):
             val_dataset,
             batch_size=data_cfg['batch_size'],
             shuffle=False,
-            num_workers=data_cfg.get('num_workers', 0),
+            num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
         )
     
     return train_loader, val_loader

@@ -3,10 +3,13 @@
 data:
   dataset_path: ./datasets
   image_size: [64, 64, 64]  # D, H, W
-  batch_size: 2
-  num_workers: 4
+  batch_size: 16
+  num_workers: 12
   train_split: 0.8
   augment: true   # Disable if overfitting test
+  image_format: dcm # dcm for DICOM, jpeg for JPEG
+  persistent_workers: true
+  prefetch_factor: 2
 
 model:
   num_classes: 5
