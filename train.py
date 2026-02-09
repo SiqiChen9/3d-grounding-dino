@@ -28,7 +28,7 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def create_dataloaders(config: dict):
+def create_dataloaders(config: dict, logger: TrainingLogger):
     """Create train and validation dataloaders.
 
     The split uses a fixed random seed for reproducibility.
@@ -61,7 +61,7 @@ def create_dataloaders(config: dict):
     val_size = int(total_size * val_ratio)
     test_size = total_size - train_size - val_size  # Remaining goes to test
     
-    print(f"Dataset split: train={train_size}, val={val_size}, test={test_size} (total={total_size})")
+    logger.info(f"Dataset split: train={train_size}, val={val_size}, test={test_size} (total={total_size})")
     
     # Split dataset with fixed seed for reproducibility
     train_dataset, val_dataset, test_dataset = random_split(
@@ -70,11 +70,11 @@ def create_dataloaders(config: dict):
         generator=torch.Generator().manual_seed(random_seed)
     )
     
-    # Print file IDs for each split (remove after verification)
+    # Log file IDs for each split (remove after verification)
     def _get_ids(subset): return [full_dataset.seg_files[i].replace('.nii','') for i in subset.indices]
-    print(f"Train IDs: {_get_ids(train_dataset)}")
-    print(f"Val IDs: {_get_ids(val_dataset)}")
-    print(f"Test IDs: {_get_ids(test_dataset)}")
+    logger.info(f"Train IDs: {_get_ids(train_dataset)}")
+    logger.info(f"Val IDs: {_get_ids(val_dataset)}")
+    logger.info(f"Test IDs: {_get_ids(test_dataset)}")
     
     # DataLoader settings for better performance
     num_workers = data_cfg.get('num_workers', 0)
@@ -343,7 +343,7 @@ def main():
     
     # Create dataloaders
     logger.info("Creating dataloaders...")
-    train_loader, val_loader = create_dataloaders(config)
+    train_loader, val_loader = create_dataloaders(config, logger)
     logger.log_dataset_info(train_loader, val_loader)
     
     # Create model
