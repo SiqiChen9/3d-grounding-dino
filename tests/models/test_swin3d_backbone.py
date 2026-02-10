@@ -283,3 +283,62 @@ class TestSwinTransformer3D:
             output2 = model(x)
         
         assert torch.allclose(output1, output2)
+
+
+class TestBackboneFeatureQuality:
+    """Tests for backbone feature extraction quality."""
+
+    def test_overfit_simple_classification(self, device):
+        """Test that backbone can learn to classify simple distinct distributions."""
+        model = SwinTransformer3D(
+            depths=[2, 2],
+            embed_dim=24,
+            in_channels=1,
+            num_heads=[3, 6],
+            patch_size=(2, 2, 2),
+            window_size=(4, 4, 4),
+            #out_indices=(1,)
+        ).to(device)
+
+        out_channels = 48
+        classifier = torch.nn.Linear(out_channels, 2).to(device)
+
+        optimizer = torch.optim.Adam(
+            list(model.parameters()) + list(classifier.parameters()),
+            lr=1e-2
+        )
+        criterion = torch.nn.CrossEntropyLoss()
+
+        model.train()
+        classifier.train()
+
+        D, H, W = 16, 16, 16
+        batch_size = 8
+        final_loss = 1.0
+
+        for _ in range(30):
+            optimizer.zero_grad()
+
+            x0 = torch.randn(batch_size // 2, 1, D, H, W, device=device)
+            y0 = torch.zeros(batch_size // 2, dtype=torch.long, device=device)
+
+            x1 = torch.randn(batch_size // 2, 1, D, H, W, device=device) + 2.0
+            y1 = torch.ones(batch_size // 2, dtype=torch.long, device=device)
+
+            x = torch.cat([x0, x1], dim=0)
+            y = torch.cat([y0, y1], dim=0)
+
+            features = model(x)
+            gap = features.mean(dim=(1, 2, 3))
+
+            logits = classifier(gap)
+            loss = criterion(logits, y)
+
+            loss.backward()
+            optimizer.step()
+
+            final_loss = loss.item()
+
+        assert final_loss < 0.01, (
+            f"Model failed to conform to simple distribution. Final loss: {final_loss}"
+        )
