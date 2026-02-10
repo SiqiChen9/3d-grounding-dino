@@ -9,6 +9,7 @@ from PIL import Image
 from typing import Tuple, List, Optional, Dict
 import torch
 from torch.utils.data import Dataset
+import pandas as pd
 
 from .preprocessing import (
     normalize_intensity,
@@ -104,6 +105,7 @@ class RSNAVolumeDataset(Dataset):
         image_study_dir = None
         
         # Pattern 1: images are in data_dir/train_images/patient_id/study_id/
+        possible_dirs = []
         if os.path.exists(self.image_dir):
             for patient_dir in os.listdir(self.image_dir):
                 patient_path = os.path.join(self.image_dir, patient_dir)
@@ -121,8 +123,9 @@ class RSNAVolumeDataset(Dataset):
             # Load JPEG slices
             jpeg_files = sorted([
                 f for f in os.listdir(image_study_dir)
-                if f.endswith('.jpeg') or f.endswith('.jpg')
-            ], key=lambda f: int(f.replace('.jpeg', '')))
+                if f.endswith('.jpeg') or f.endswith('.jpg')],
+                key=lambda f: int(f.replace('.jpeg', ''))
+            )
             
             if len(jpeg_files) == 0:
                 volume = np.zeros(seg_data.shape, dtype=np.float32)
@@ -185,7 +188,7 @@ class RSNAVolumeDataset(Dataset):
         
         # Apply augmentation if enabled
         if self.augment and self.train:
-            boxes_list = [{'box': box, 'label': label}
+            boxes_list = [{'box': box, 'label': label} 
                          for box, label in zip(boxes, labels)]
             volume, boxes_list = apply_augmentation_3d(
                 volume, boxes_list,
