@@ -174,10 +174,12 @@ class RSNAVolumeDataset(Dataset):
             volume = volume / 255.0
         elif format_used in ['dcm', 'numpy']:
             # DICOM/NumPy images are in Hounsfield Units (HU)
-            # Typical CT window for soft tissue: [-100, 300] HU
-            # Clip to a reasonable range and normalize to [0, 1]
-            HU_MIN = -1000  # Air
-            HU_MAX = 1000   # Bone
+            # Use abdominal soft tissue window for better contrast
+            # Window Center (WC) = 40, Window Width (WW) = 400
+            # This gives range: [WC - WW/2, WC + WW/2] = [-160, 240]
+            # Good for liver, spleen, kidneys, and bowel visualization
+            HU_MIN = -160  # Soft tissue lower bound
+            HU_MAX = 240   # Soft tissue upper bound
             volume = np.clip(volume, HU_MIN, HU_MAX)
             volume = (volume - HU_MIN) / (HU_MAX - HU_MIN)
             
