@@ -437,11 +437,21 @@ class RSNAVolumeDataset(Dataset):
         
         if volume.shape != target_size:
             volume = resize_volume(volume, target_size, order=1)
-            mask = resize_volume(mask, target_size, order=0)  # Nearest for labels
-            # Ensure mask is also float32 for consistency
-            mask = mask.astype(np.float32)
+            mask = resize_volume(mask, target_size, order=0).astype(np.int32)  # Nearest for labels
         
-        # Convert mask to bounding boxes
+        # Apply augmentation to volume and mask jointly (before box extraction)
+        if self.augment and self.train:
+            volume, mask = apply_augmentation_3d(
+                volume, mask,
+                rotate_prob=0.5,
+                rotate_range=30.0,
+                scale_prob=0.5,
+                scale_range=(0.85, 1.15),
+                elastic_prob=0.3,
+                intensity_jitter=0.1
+            )
+        
+        # Convert mask to bounding boxes (after augmentation so boxes are always accurate)
         boxes_data = mask_to_boxes_3d(mask, min_volume=50)
         
         # Extract boxes and labels
@@ -453,22 +463,6 @@ class RSNAVolumeDataset(Dataset):
             boxes = np.array([b['box'] for b in boxes_data], dtype=np.float32)
             # Convert labels from 1-5 to 0-4 for model compatibility
             labels = np.array([b['label'] - 1 for b in boxes_data], dtype=np.int64)
-        
-        # Apply augmentation if enabled
-        if self.augment and self.train:
-            boxes_list = [{'box': box, 'label': label} 
-                         for box, label in zip(boxes, labels)]
-            volume, boxes_list = apply_augmentation_3d(
-                volume, boxes_list,
-                rotate_prob=0.5,
-                rotate_range=30.0,
-                scale_prob=0.5,
-                scale_range=(0.85, 1.15),
-                elastic_prob=0.3,
-                intensity_jitter=0.1
-            )
-            boxes = np.array([b['box'] for b in boxes_list], dtype=np.float32)
-            labels = np.array([b['label'] for b in boxes_list], dtype=np.int64)
         
         # Convert to tensors
         volume_tensor = torch.from_numpy(volume).unsqueeze(0)  # (1, D, H, W)
