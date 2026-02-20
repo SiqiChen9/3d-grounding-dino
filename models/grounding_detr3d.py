@@ -124,13 +124,13 @@ class GroundingDETR3D(nn.Module):
         )
         
         # ═══════════════════════════════════════════════════════
-        # Component 4: Language-guided Query Selection (Placeholder)
+        # Component 4: Language-guided Query Selection
         # ═══════════════════════════════════════════════════════
         self.query_selection = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            num_classes=num_classes,
-            image_feature_dim=hidden_dim  # Backbone output is already projected to hidden_dim
+            image_feature_dim=hidden_dim,
+            text_feature_dim=hidden_dim
         )
         
         # ═══════════════════════════════════════════════════════
@@ -194,12 +194,14 @@ class GroundingDETR3D(nn.Module):
         
         # ═══════════════════════════════════════════════════════
         # Step 3: Language-guided query selection
-        # (Currently a placeholder - generates fixed learnable queries)
         # ═══════════════════════════════════════════════════════
         
+        # Convert image features from (N, B, D) to (B, N, D) for query selection
+        image_features_batch_first = enhanced_image_features.permute(1, 0, 2)
+        
         selected_queries = self.query_selection(
+            image_features_batch_first,
             enhanced_text_features,
-            enhanced_image_features,
             B
         )  # (num_queries, B, hidden_dim)
         
