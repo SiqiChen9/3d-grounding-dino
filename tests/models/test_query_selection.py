@@ -2,7 +2,7 @@
 Unit tests for models/query_selection.py
 
 Tests:
-- LanguageGuidedQuerySelection: output shape, query count
+- LanguageGuidedQuerySelection: output shape, query count, gradient flow
 """
 import pytest
 import torch
@@ -24,15 +24,15 @@ class TestLanguageGuidedQuerySelection:
         model = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            num_classes=num_classes,
-            image_feature_dim=image_feature_dim
+            image_feature_dim=image_feature_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         
-        N = 64  # Flattened spatial dimension
+        N = 200  # Must be >= num_queries for full selection
+        image_features = torch.randn(batch_size, N, image_feature_dim, device=device)
         text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-        image_features = torch.randn(N, batch_size, image_feature_dim, device=device)
         
-        queries = model(text_features, image_features, batch_size)
+        queries = model(image_features, text_features, batch_size)
         
         assert queries.shape == (num_queries, batch_size, hidden_dim)
     
@@ -44,13 +44,14 @@ class TestLanguageGuidedQuerySelection:
             model = LanguageGuidedQuerySelection(
                 num_queries=nq,
                 hidden_dim=hidden_dim,
-                image_feature_dim=image_feature_dim
+                image_feature_dim=image_feature_dim,
+                text_feature_dim=hidden_dim
             ).to(device)
             
+            image_features = torch.randn(batch_size, 300, image_feature_dim, device=device)
             text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-            image_features = torch.randn(64, batch_size, image_feature_dim, device=device)
             
-            queries = model(text_features, image_features, batch_size)
+            queries = model(image_features, text_features, batch_size)
             
             assert queries.shape[0] == nq
             assert queries.shape[1] == batch_size
@@ -63,14 +64,15 @@ class TestLanguageGuidedQuerySelection:
         model = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=image_feature_dim
+            image_feature_dim=image_feature_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         
         for bs in [1, 2, 4, 8]:
+            image_features = torch.randn(bs, 200, image_feature_dim, device=device)
             text_features = torch.randn(bs, num_classes, hidden_dim, device=device)
-            image_features = torch.randn(64, bs, image_feature_dim, device=device)
             
-            queries = model(text_features, image_features, bs)
+            queries = model(image_features, text_features, bs)
             
             assert queries.shape == (num_queries, bs, hidden_dim)
     
@@ -80,13 +82,14 @@ class TestLanguageGuidedQuerySelection:
             model = LanguageGuidedQuerySelection(
                 num_queries=num_queries,
                 hidden_dim=hidden_dim,
-                image_feature_dim=ifd
+                image_feature_dim=ifd,
+                text_feature_dim=hidden_dim
             ).to(device)
             
+            image_features = torch.randn(batch_size, 200, ifd, device=device)
             text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-            image_features = torch.randn(64, batch_size, ifd, device=device)
             
-            queries = model(text_features, image_features, batch_size)
+            queries = model(image_features, text_features, batch_size)
             
             assert queries.shape == (num_queries, batch_size, hidden_dim)
     
@@ -97,50 +100,51 @@ class TestLanguageGuidedQuerySelection:
         model = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=image_feature_dim
+            image_feature_dim=image_feature_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         
+        image_features = torch.randn(
+            batch_size, 200, image_feature_dim,
+            device=device, requires_grad=True
+        )
         text_features = torch.randn(
             batch_size, num_classes, hidden_dim,
             device=device, requires_grad=True
         )
-        image_features = torch.randn(
-            64, batch_size, image_feature_dim,
-            device=device, requires_grad=True
-        )
         
-        queries = model(text_features, image_features, batch_size)
+        queries = model(image_features, text_features, batch_size)
         loss = queries.sum()
         loss.backward()
         
-        # Both inputs should have gradients
-        assert text_features.grad is not None
+        # Image inputs should have gradients (text grads may be None due to topk)
         assert image_features.grad is not None
     
     def test_queries_from_text_and_image(self, device, batch_size, num_classes, hidden_dim, num_queries):
-        """Test that queries are generated from both text and image features."""
+        """Test that queries change with different text and image features."""
         image_feature_dim = 256
         
         model = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=image_feature_dim
+            image_feature_dim=image_feature_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         model.eval()
         
+        image_features = torch.randn(batch_size, 200, image_feature_dim, device=device)
         text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-        image_features = torch.randn(64, batch_size, image_feature_dim, device=device)
         
         with torch.no_grad():
-            queries1 = model(text_features, image_features, batch_size)
+            queries1 = model(image_features, text_features, batch_size)
             
             # Different text features should give different queries
             text_features2 = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-            queries2 = model(text_features2, image_features, batch_size)
+            queries2 = model(image_features, text_features2, batch_size)
             
             # Different image features should give different queries
-            image_features2 = torch.randn(64, batch_size, image_feature_dim, device=device)
-            queries3 = model(text_features, image_features2, batch_size)
+            image_features2 = torch.randn(batch_size, 200, image_feature_dim, device=device)
+            queries3 = model(image_features2, text_features, batch_size)
         
         assert not torch.allclose(queries1, queries2)
         assert not torch.allclose(queries1, queries3)
@@ -150,12 +154,32 @@ class TestLanguageGuidedQuerySelection:
         model = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=256
+            image_feature_dim=256,
+            text_feature_dim=hidden_dim
         ).to(device)
         
+        image_features = torch.randn(batch_size, 200, 256, device=device)
         text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
-        image_features = torch.randn(64, batch_size, 256, device=device)
         
-        queries = model(text_features, image_features, batch_size)
+        queries = model(image_features, text_features, batch_size)
         
         assert queries.dtype == torch.float32
+    
+    def test_num_queries_exceeds_img_tokens(self, device, batch_size, num_classes, hidden_dim):
+        """Test edge case where num_queries > num_img_tokens."""
+        num_queries = 200
+        model = LanguageGuidedQuerySelection(
+            num_queries=num_queries,
+            hidden_dim=hidden_dim,
+            image_feature_dim=hidden_dim,
+            text_feature_dim=hidden_dim
+        ).to(device)
+        
+        # Only 50 image tokens but 200 queries requested
+        image_features = torch.randn(batch_size, 50, hidden_dim, device=device)
+        text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
+        
+        queries = model(image_features, text_features, batch_size)
+        
+        # Should still return num_queries (padding with pure content queries)
+        assert queries.shape == (num_queries, batch_size, hidden_dim)

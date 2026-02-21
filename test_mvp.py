@@ -28,7 +28,8 @@ def test_data_loading():
             volume_size=(64, 128, 128),
             train=True,
             augment=False,
-            num_samples=1
+            num_samples=1,
+            image_format='dcm',  # 'dcm' or 'jpeg'
         )
         
         print(f"✓ Dataset created with {len(dataset)} samples")
