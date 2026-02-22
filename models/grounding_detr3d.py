@@ -68,6 +68,7 @@ class GroundingDETR3D(nn.Module):
         backbone_embed_dim: int = 96,
         backbone_depths: list = [2, 2, 6, 2],
         backbone_num_heads: list = [3, 6, 12, 24],
+        backbone_window_size: tuple = (7, 7, 7),
         # Decoder parameters
         num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
@@ -94,12 +95,13 @@ class GroundingDETR3D(nn.Module):
             embed_dim=backbone_embed_dim,
             depths=backbone_depths,
             num_heads=backbone_num_heads,
-            window_size=(7, 7, 7),
+            window_size=backbone_window_size,
             mlp_ratio=4.0,
             qkv_bias=True,
             drop_rate=dropout,
             attn_drop_rate=dropout,
-            out_channels=hidden_dim  # Project from 768 to hidden_dim (256)
+            out_channels=hidden_dim,  # Project from 768 to hidden_dim (256)
+            out_indices=(len(backbone_depths) - 1,)  # Always output the last stage
         )
         
         # ═══════════════════════════════════════════════════════
@@ -122,13 +124,13 @@ class GroundingDETR3D(nn.Module):
         )
         
         # ═══════════════════════════════════════════════════════
-        # Component 4: Language-guided Query Selection (Placeholder)
+        # Component 4: Language-guided Query Selection
         # ═══════════════════════════════════════════════════════
         self.query_selection = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            num_classes=num_classes,
-            image_feature_dim=hidden_dim  # Backbone output is already projected to hidden_dim
+            image_feature_dim=hidden_dim,
+            text_feature_dim=hidden_dim
         )
         
         # ═══════════════════════════════════════════════════════
@@ -192,12 +194,14 @@ class GroundingDETR3D(nn.Module):
         
         # ═══════════════════════════════════════════════════════
         # Step 3: Language-guided query selection
-        # (Currently a placeholder - generates fixed learnable queries)
         # ═══════════════════════════════════════════════════════
         
+        # Convert image features from (N, B, D) to (B, N, D) for query selection
+        image_features_batch_first = enhanced_image_features.permute(1, 0, 2)
+        
         selected_queries = self.query_selection(
+            image_features_batch_first,
             enhanced_text_features,
-            enhanced_image_features,
             B
         )  # (num_queries, B, hidden_dim)
         
@@ -248,6 +252,7 @@ def build_model(config: dict) -> GroundingDETR3D:
         backbone_embed_dim=model_config.get('backbone_embed_dim', 96),
         backbone_depths=model_config.get('backbone_depths', [2, 2, 6, 2]),
         backbone_num_heads=model_config.get('backbone_num_heads', [3, 6, 12, 24]),
+        backbone_window_size=tuple(model_config.get('backbone_window_size', [7, 7, 7])),
         num_encoder_layers=model_config.get('num_encoder_layers', 6),
         num_decoder_layers=model_config.get('num_decoder_layers', 6),
         num_heads=model_config.get('num_heads', 8),

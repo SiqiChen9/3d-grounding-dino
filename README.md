@@ -12,10 +12,15 @@ This project implements a **3D Grounding-DETR framework** for volumetric CT scan
 
 ### ✅ Completed Features
 - ✅ **3D Swin Transformer backbone** with hierarchical feature extraction
-  - ⚠️ Note: Currently uses full attention (window-based attention is TODO)
+  - 目前仍有若干优化方向：
+    1. 启用多尺度输出（接口已预留好，须在其他文件做适配）：这可以提高对微小病灶的检测。但是会显著增加显存占用和计算量。
+    2. ~~解决 Mask 的重复计算：这可以减少显存占用和计算量。但由于当前每个 epoch 内的 batch 较小，推测无法显著优化；另外若输入图像分辨率不一致需要做适配。~~
+    3. 缺乏 Gradient Checkpointing：这可以减少内存占用。但鉴于目前模型对内存的占用仍可接受，暂该不做优化。
+    4. 频繁的 Padding 和 Unpadding（并不能优化很多性能）。#性价比不高
+    5. 使用 Flash Attention 加速：提高内存读取效率。但鉴于 Swin 的特性（Relative Position Bias）无法直接调用。#较难
 - ⚠️ **Cross-modality decoder** with separate text and image attention mechanisms (self-attention is TODO)
 - ✅ **Pseudo class token system** replacing text encoder for medical domain
-- ⚠️ **Feature Enhancer** - Basic implementation (bidirectional cross-attention is TODO)
+- ✅ **Feature Enhancer** - Full implementation with bidirectional cross-attention (self-attention + image-to-text + text-to-image + FFN)
 - ⚠️ **Query Selection** - Fixed learnable queries (dynamic selection is TODO)
 - ✅ **Hungarian matching** with set-based loss (CE + L1 + 3D GIoU)
 - ✅ **Complete training pipeline** with AdamW optimizer and cosine scheduling
@@ -56,7 +61,9 @@ The current MVP is **complete and functional**. All core components have been im
 
 ### ✅ Data Pipeline
 - **NIfTI segmentation loading** with automatic 3D bounding box extraction
-- **JPEG slice stacking** into volumetric arrays
+- **DICOM/JPEG slice loading** into volumetric arrays
+  - `image_format='dcm'`: Load DICOM files with HU conversion (default, for full training)
+  - `image_format='jpeg'`: Load JPEG files (for small-scale testing)
 - **Intensity normalization** for CT Hounsfield units
 - **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
 - **Data augmentation** with 3D rotations and flips (configurable)
@@ -74,9 +81,15 @@ The current MVP is **complete and functional**. All core components have been im
   - MLP projection for feature transformation
   - Replaces text encoder for medical domain
   
-- **Feature Enhancer** (`feature_enhancer.py`) ⚠️ **TODO**
-  - Currently implements identity/pass-through operation
-  - **Planned**: Bidirectional cross-attention between image and text features
+- **Feature Enhancer** (`feature_enhancer.py`) ✅ **IMPLEMENTED**
+  - Bidirectional cross-attention between image and text features
+  - Components:
+    - Self-Attention for both text and image modalities
+    - Image-to-Text Cross-Attention (Image queries attending to Text)
+    - Text-to-Image Cross-Attention (Text queries attending to Image)
+    - Feed-Forward Networks (FFN) for each modality
+    - Residual connections and Layer Normalization
+  - Stackable layers with configurable depth (default: 1, can be set to 6)
   
 - **Language-guided Query Selection** (`query_selection.py`) ⚠️ **TODO**
   - Currently generates fixed learnable queries
@@ -267,6 +280,9 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 - **num_workers**: DataLoader workers (default: 4)
 - **train_split**: Train/validation split ratio (default: 0.8)
 - **augment**: Enable/disable data augmentation (default: false)
+- **image_format**: Image format to load (default: `dcm`)
+  - `dcm`: Load DICOM files with HU conversion (for full training)
+  - `jpeg`: Load JPEG files (for small-scale testing)
 
 ### Model Configuration
 - **num_classes**: Number of target classes (default: 5)

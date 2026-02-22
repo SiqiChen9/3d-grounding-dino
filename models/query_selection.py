@@ -1,6 +1,11 @@
 """
-Language-guided Query Selection (Placeholder).
-Corresponds to "Language-guide Query Selection" in the architecture diagram.
+Language-guided Query Selection based on Grounding DINO.
+
+Algorithm:
+    S[b,i,j] = image_feat[b,i] · text_feat[b,j]  (similarity matrix)
+    score[b,i] = max_j(S[b,i,j])                  (per-position score)
+    topk_idx = argsort(score)[-K:]                 (select top-K positions)
+    query[b,k] = selected_feat[b,k] + content_query[k]  (mixed init)
 """
 import torch
 import torch.nn as nn
@@ -8,112 +13,128 @@ import torch.nn as nn
 
 class LanguageGuidedQuerySelection(nn.Module):
     """
-    Language-guided Query Selection - PLACEHOLDER FOR FUTURE IMPLEMENTATION.
+    Select object queries by image-text similarity matching.
     
-    TODO: Implement intelligent query selection based on text features:
-    
-    Planned Functionality:
-    ┌─────────────────────────────────────────────────────┐
-    │ 1. Analyze text features to understand targets      │
-    │    - Which classes are present?                     │
-    │    - What are their characteristics?                │
-    ├─────────────────────────────────────────────────────┤
-    │ 2. Select relevant queries                          │
-    │    - Filter out irrelevant queries                  │
-    │    - Prioritize queries for detected classes        │
-    ├─────────────────────────────────────────────────────┤
-    │ 3. Initialize queries with text guidance            │
-    │    - Use text embeddings to guide query init        │
-    │    - Improve query diversity and relevance          │
-    └─────────────────────────────────────────────────────┘
-    
-    Current Implementation:
-        - Simple learnable query embeddings
-        - Linear projection maintains interface
-        - Returns fixed number of queries
-    
-    Future Enhancements:
-        - Dynamic query selection based on text
-        - Adaptive number of queries per class
-        - Text-conditioned query initialization
-        - Query filtering and ranking mechanisms
+    Instead of fixed learnable queries (standard DETR), dynamically selects
+    the top-K image features most similar to text descriptions, then mixes
+    them with learnable content queries.
     """
-    
+
     def __init__(
         self,
-        num_queries: int = 100,
+        num_queries: int = 900,
         hidden_dim: int = 256,
-        num_classes: int = 5,
-        image_feature_dim: int = 768
+        image_feature_dim: int = 256,
+        text_feature_dim: int = 256,
     ):
         """
         Args:
-            num_queries: Number of object queries to generate
-            hidden_dim: Hidden dimension for queries
-            num_classes: Number of object classes (for future use)
-            image_feature_dim: Input dimension of image features from backbone
+            num_queries: Number of queries to select (K).
+            hidden_dim: Internal feature dimension.
+            image_feature_dim: Dimension of input image features.
+            text_feature_dim: Dimension of input text features.
         """
         super().__init__()
+        
         self.num_queries = num_queries
         self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
 
-        # Projection layers for input features
-        self.text_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.image_proj = nn.Linear(image_feature_dim, hidden_dim)
+        # Feature projection layers (identity if dims already match)
+        # self.image_proj = (nn.Linear(image_feature_dim, hidden_dim)
+        #                    if image_feature_dim != hidden_dim else nn.Identity())
+        if image_feature_dim != hidden_dim:
+            self.image_proj = nn.Linear(image_feature_dim, hidden_dim)
+        else:
+            self.image_proj = nn.Identity()
+        # self.text_proj = (nn.Linear(text_feature_dim, hidden_dim)
+        #                   if text_feature_dim != hidden_dim else nn.Identity())
+        if text_feature_dim != hidden_dim:
+            self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
+        else:
+            self.text_proj = nn.Identity()
 
-        # Simple linear layer to generate queries from pooled features
-        self.query_generator = nn.Linear(hidden_dim, num_queries * hidden_dim)
+        # Learnable content queries — semantic part of mixed query init
+        # Shape: (num_queries, hidden_dim)
+        # self.content_queries = nn.Parameter(torch.randn(num_queries, hidden_dim))
+        self.content_queries = nn.Parameter(
+            torch.randn(num_queries, hidden_dim)
+        )
+        nn.init.xavier_uniform_(self.content_queries)
 
         self._init_weights()
 
     def _init_weights(self):
-        """Initialize weights."""
-        nn.init.xavier_uniform_(self.text_proj.weight)
-        nn.init.xavier_uniform_(self.image_proj.weight)
-        nn.init.xavier_uniform_(self.query_generator.weight)
-    
+        """
+        Initialize all linear layer weights using Xavier uniform initialization.
+        
+        Xavier initialization ensures gradients flow stably during training,
+        especially important for deep networks. Biases are initialized to zero.
+        """
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
     def forward(
         self,
-        text_features: torch.Tensor,
         image_features: torch.Tensor,
+        text_features: torch.Tensor,
         batch_size: int
     ) -> torch.Tensor:
         """
-        Generate object queries guided by both text and image features.
-
+        Generate language-guided object queries.
+        
         Args:
-            text_features: (B, num_classes, hidden_dim) - enhanced text features
-            image_features: (N, B, image_feature_dim) - image features (flattened spatial)
-            batch_size: Number of samples in batch
-
+            image_features: (B, num_img_tokens, image_feature_dim)
+            text_features:  (B, num_text_tokens, text_feature_dim)
+            batch_size: Batch size (must match B).
+        
         Returns:
-            queries: (num_queries, B, hidden_dim) - selected/initialized queries
-
-        TODO: Replace simple FFN lookup with:
-            1. Analyze text_features to determine relevant classes
-            2. Generate class-specific queries
-            3. Filter and rank queries based on text guidance
-            4. Return dynamic number of queries per sample
+            queries: (num_queries, B, hidden_dim) — ready for DETR decoder.
         """
-        # Project text features: (B, num_classes, hidden_dim) -> (B, num_classes, hidden_dim)
-        text_proj = self.text_proj(text_features)
+        # Step 1: Project to unified space
+        image_feat = self.image_proj(image_features)  # (B, N_img, D)
+        text_feat = self.text_proj(text_features)      # (B, N_txt, D)
+        B, num_img_tokens, D = image_feat.shape
 
-        # Project image features: (N, B, image_feature_dim) -> (N, B, hidden_dim)
-        image_proj = self.image_proj(image_features)
+        # Step 2: Image-text similarity matrix via dot product
+        logits = torch.einsum("bic,btc->bit", image_feat, text_feat)  # (B, N_img, N_txt)
 
-        # Pool text features: (B, num_classes, hidden_dim) -> (B, hidden_dim)
-        text_pooled = text_proj.mean(dim=1)
+        # Step 3: Per-position score = max similarity across text tokens
+        logits_per_img_feature = logits.max(dim=-1)[0]  # (B, N_img)
 
-        # Pool image features: (N, B, hidden_dim) -> (B, hidden_dim)
-        image_pooled = image_proj.mean(dim=0)
+        # Step 4: Top-K selection (clamp K to available tokens)
+        actual_k = min(self.num_queries, num_img_tokens)
+        # _, topk_idx = torch.topk(logits_per_img_feature, actual_k, dim=1)  # (B, actual_k)
+        topk_values, topk_idx = torch.topk(
+            logits_per_img_feature,
+            min(self.num_queries, num_img_tokens),  # Safe K value
+            dim=1,
+            largest=True  # Select largest values (most similar)
+        )
 
-        # Combine text and image features
-        combined = text_pooled + image_pooled  # (B, hidden_dim)
+        # Step 5: Gather selected image features
+        topk_idx_expanded = topk_idx.unsqueeze(-1).expand(-1, -1, D)
+        # selected_features = torch.gather(image_feat, dim=1, index=topk_idx_expanded)  # (B, actual_k, D)
+        selected_features = torch.gather(
+            image_feat,           # Source: all image features (B, num_img_tokens, D)
+            dim=1,                # Gather along image_token dimension
+            index=topk_idx_expanded
+        )  # (B, actual_k, D)
 
-        # Generate queries from combined features
-        queries = self.query_generator(combined)  # (B, num_queries * hidden_dim)
-        queries = queries.view(batch_size, self.num_queries, self.hidden_dim)  # (B, num_queries, hidden_dim)
-        queries = queries.permute(1, 0, 2)  # (num_queries, B, hidden_dim)
+        # Step 6: Mix position (selected features) + content (learnable)
+        if actual_k < self.num_queries:
+            # Not enough image tokens — pad remaining slots with pure content queries
+            content_part = self.content_queries.unsqueeze(0).expand(B, -1, -1)  # (B, num_queries, D)
+            # First actual_k slots: position + content
+            mixed_queries = content_part.clone()
+            mixed_queries[:, :actual_k, :] = selected_features + content_part[:, :actual_k, :]
+        else:
+            content_part = self.content_queries.unsqueeze(0).expand(B, -1, -1)
+            mixed_queries = selected_features + content_part  # (B, num_queries, D)
 
+        # Step 7: Transpose to decoder format (seq, batch, dim)
+        queries = mixed_queries.permute(1, 0, 2)  # (num_queries, B, D)
+        
         return queries

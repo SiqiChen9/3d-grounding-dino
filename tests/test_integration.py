@@ -182,7 +182,8 @@ class TestModuleInterfaceCompatibility:
             embed_dim=48,
             depths=[1, 1],
             num_heads=[2, 4],
-            out_channels=hidden_dim
+            out_channels=hidden_dim,
+            out_indices=(1,)  # depths=[1,1] has 2 stages: 0 and 1
         ).to(device)
         
         enhancer = FeatureEnhancer(hidden_dim=hidden_dim).to(device)
@@ -210,18 +211,22 @@ class TestModuleInterfaceCompatibility:
         query_sel = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=hidden_dim
+            image_feature_dim=hidden_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         
-        N = 64
+        N = 200  # Must be >= num_queries for full selection
         text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
         image_features = torch.randn(N, batch_size, hidden_dim, device=device)
         
         # Enhance
         enhanced_text, enhanced_image = enhancer(text_features, image_features)
         
-        # Query selection
-        queries = query_sel(enhanced_text, enhanced_image, batch_size)
+        # Convert to batch-first for query selection: (N, B, D) -> (B, N, D)
+        enhanced_image_bf = enhanced_image.permute(1, 0, 2)
+        
+        # Query selection (image first, text second)
+        queries = query_sel(enhanced_image_bf, enhanced_text, batch_size)
         
         assert queries.shape == (num_queries, batch_size, hidden_dim)
     
@@ -230,7 +235,8 @@ class TestModuleInterfaceCompatibility:
         query_sel = LanguageGuidedQuerySelection(
             num_queries=num_queries,
             hidden_dim=hidden_dim,
-            image_feature_dim=hidden_dim
+            image_feature_dim=hidden_dim,
+            text_feature_dim=hidden_dim
         ).to(device)
         
         decoder = CrossModalityDecoder(
@@ -240,14 +246,17 @@ class TestModuleInterfaceCompatibility:
             num_decoder_layers=1
         ).to(device)
         
-        N = 64
+        N = 200  # Must be >= num_queries for full selection
         text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
         image_features = torch.randn(N, batch_size, hidden_dim, device=device)
         
-        # Generate queries
-        queries = query_sel(text_features, image_features, batch_size)
+        # Convert to batch-first for query selection: (N, B, D) -> (B, N, D)
+        image_features_bf = image_features.permute(1, 0, 2)
         
-        # Decode
+        # Generate queries (image first, text second)
+        queries = query_sel(image_features_bf, text_features, batch_size)
+        
+        # Decode (decoder still uses sequence-first format)
         pred_logits, pred_boxes = decoder(image_features, text_features, queries)
         
         assert pred_logits.shape == (batch_size, num_queries, num_classes + 1)
