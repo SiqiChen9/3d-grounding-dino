@@ -126,48 +126,48 @@ class FeatureEnhancerLayer(nn.Module):
         
         # ============ Self-Attention ============
         # Image self-attention
+        image_normed = self.image_self_attn_norm(image_features)
         image_attn_out, _ = self.image_self_attn(
-            image_features, image_features, image_features
+            image_normed, image_normed, image_normed
         )
         image_features = image_features + self.dropout(image_attn_out)
-        image_features = self.image_self_attn_norm(image_features)
         
         # Text self-attention
+        text_normed = self.text_self_attn_norm(text_features_t)
         text_attn_out, _ = self.text_self_attn(
-            text_features_t, text_features_t, text_features_t
+            text_normed, text_normed, text_normed
         )
         text_features_t = text_features_t + self.dropout(text_attn_out)
-        text_features_t = self.text_self_attn_norm(text_features_t)
         
         # ============ Cross-Attention ============
         # Image-to-Text Cross-Attention (Image queries, Text keys/values)
+        image_normed = self.image_to_text_attn_norm(image_features)
+        text_normed = self.text_self_attn_norm(text_features_t)
         image_to_text_out, _ = self.image_to_text_attn(
-            query=image_features,
-            key=text_features_t,
-            value=text_features_t
+            query=image_normed,
+            key=text_normed,
+            value=text_normed
         )
         image_features = image_features + self.dropout(image_to_text_out)
-        image_features = self.image_to_text_attn_norm(image_features)
         
         # Text-to-Image Cross-Attention (Text queries, Image keys/values)
+        text_normed = self.text_to_image_attn_norm(text_features_t)
+        image_normed = self.image_to_text_attn_norm(image_features)
         text_to_image_out, _ = self.text_to_image_attn(
-            query=text_features_t,
-            key=image_features,
-            value=image_features
+            query=text_normed,
+            key=image_normed,
+            value=image_normed
         )
         text_features_t = text_features_t + self.dropout(text_to_image_out)
-        text_features_t = self.text_to_image_attn_norm(text_features_t)
         
         # ============ Feed-Forward Networks ============
         # Image FFN
-        image_ffn_out = self.image_ffn(image_features)
+        image_ffn_out = self.image_ffn(self.image_ffn_norm(image_features))
         image_features = image_features + self.dropout(image_ffn_out)
-        image_features = self.image_ffn_norm(image_features)
         
         # Text FFN
-        text_ffn_out = self.text_ffn(text_features_t)
+        text_ffn_out = self.text_ffn(self.text_ffn_norm(text_features_t))
         text_features_t = text_features_t + self.dropout(text_ffn_out)
-        text_features_t = self.text_ffn_norm(text_features_t)
         
         # Transpose back
         text_features = text_features_t.transpose(0, 1)
