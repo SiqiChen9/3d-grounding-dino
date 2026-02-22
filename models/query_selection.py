@@ -40,14 +40,10 @@ class LanguageGuidedQuerySelection(nn.Module):
         self.hidden_dim = hidden_dim
 
         # Feature projection layers (identity if dims already match)
-        # self.image_proj = (nn.Linear(image_feature_dim, hidden_dim)
-        #                    if image_feature_dim != hidden_dim else nn.Identity())
         if image_feature_dim != hidden_dim:
             self.image_proj = nn.Linear(image_feature_dim, hidden_dim)
         else:
             self.image_proj = nn.Identity()
-        # self.text_proj = (nn.Linear(text_feature_dim, hidden_dim)
-        #                   if text_feature_dim != hidden_dim else nn.Identity())
         if text_feature_dim != hidden_dim:
             self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
         else:
@@ -55,7 +51,6 @@ class LanguageGuidedQuerySelection(nn.Module):
 
         # Learnable content queries — semantic part of mixed query init
         # Shape: (num_queries, hidden_dim)
-        # self.content_queries = nn.Parameter(torch.randn(num_queries, hidden_dim))
         self.content_queries = nn.Parameter(
             torch.randn(num_queries, hidden_dim)
         )
@@ -106,7 +101,6 @@ class LanguageGuidedQuerySelection(nn.Module):
 
         # Step 4: Top-K selection (clamp K to available tokens)
         actual_k = min(self.num_queries, num_img_tokens)
-        # _, topk_idx = torch.topk(logits_per_img_feature, actual_k, dim=1)  # (B, actual_k)
         topk_values, topk_idx = torch.topk(
             logits_per_img_feature,
             min(self.num_queries, num_img_tokens),  # Safe K value
@@ -116,7 +110,6 @@ class LanguageGuidedQuerySelection(nn.Module):
 
         # Step 5: Gather selected image features
         topk_idx_expanded = topk_idx.unsqueeze(-1).expand(-1, -1, D)
-        # selected_features = torch.gather(image_feat, dim=1, index=topk_idx_expanded)  # (B, actual_k, D)
         selected_features = torch.gather(
             image_feat,           # Source: all image features (B, num_img_tokens, D)
             dim=1,                # Gather along image_token dimension
