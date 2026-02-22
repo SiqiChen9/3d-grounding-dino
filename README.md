@@ -20,7 +20,7 @@ This project implements a **3D Grounding-DETR framework** for volumetric CT scan
     5. 使用 Flash Attention 加速：提高内存读取效率。但鉴于 Swin 的特性（Relative Position Bias）无法直接调用。#较难
 - ⚠️ **Cross-modality decoder** with separate text and image attention mechanisms (self-attention is TODO)
 - ✅ **Pseudo class token system** replacing text encoder for medical domain
-- ⚠️ **Feature Enhancer** - Basic implementation (bidirectional cross-attention is TODO)
+- ✅ **Feature Enhancer** - Full implementation with bidirectional cross-attention (self-attention + image-to-text + text-to-image + FFN)
 - ⚠️ **Query Selection** - Fixed learnable queries (dynamic selection is TODO)
 - ✅ **Hungarian matching** with set-based loss (CE + L1 + 3D GIoU)
 - ✅ **Complete training pipeline** with AdamW optimizer and cosine scheduling
@@ -83,9 +83,15 @@ The current MVP is **complete and functional**. All core components have been im
   - MLP projection for feature transformation
   - Replaces text encoder for medical domain
   
-- **Feature Enhancer** (`feature_enhancer.py`) ⚠️ **TODO**
-  - Currently implements identity/pass-through operation
-  - **Planned**: Bidirectional cross-attention between image and text features
+- **Feature Enhancer** (`feature_enhancer.py`) ✅ **IMPLEMENTED**
+  - Bidirectional cross-attention between image and text features
+  - Components:
+    - Self-Attention for both text and image modalities
+    - Image-to-Text Cross-Attention (Image queries attending to Text)
+    - Text-to-Image Cross-Attention (Text queries attending to Image)
+    - Feed-Forward Networks (FFN) for each modality
+    - Residual connections and Layer Normalization
+  - Stackable layers with configurable depth (default: 1, can be set to 6)
   
 - **Language-guided Query Selection** (`query_selection.py`) ⚠️ **TODO**
   - Currently generates fixed learnable queries

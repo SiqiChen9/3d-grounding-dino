@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datasets import RSNAVolumeDataset, collate_fn
 from models import GroundingDETR3D, build_model
 from models.losses import HungarianMatcher, SetCriterion
+from models.feature_enhancer import FeatureEnhancer, FeatureEnhancerLayer
 from torch.utils.data import DataLoader
 
 
@@ -267,6 +268,103 @@ def test_training_step():
         return False
 
 
+def test_feature_enhancer():
+    """Test Feature Enhancer module."""
+    print("\n" + "="*60)
+    print("TEST 5: Feature Enhancer")
+    print("="*60)
+    
+    try:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Initialize Feature Enhancer
+        hidden_dim = 256
+        num_heads = 8
+        dropout = 0.1
+        num_layers = 2
+        
+        enhancer = FeatureEnhancer(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            num_layers=num_layers
+        ).to(device)
+        
+        print(f"✓ Feature Enhancer created with {num_layers} layers")
+        
+        # Create dummy inputs
+        batch_size = 2
+        num_classes = 5
+        num_spatial_tokens = 32  # (2x4x4 for 64x64x64 volume with 16x downsampling)
+        
+        text_features = torch.randn(batch_size, num_classes, hidden_dim, device=device)
+        image_features = torch.randn(num_spatial_tokens, batch_size, hidden_dim, device=device)
+        
+        print(f"✓ Dummy inputs created:")
+        print(f"  - Text features shape: {text_features.shape}")
+        print(f"  - Image features shape: {image_features.shape}")
+        
+        # Forward pass
+        enhanced_text, enhanced_image = enhancer(text_features, image_features)
+        
+        print(f"✓ Forward pass successful:")
+        print(f"  - Enhanced text shape: {enhanced_text.shape}")
+        print(f"  - Enhanced image shape: {enhanced_image.shape}")
+        
+        # Verify output shapes
+        assert enhanced_text.shape == text_features.shape, \
+            f"Text shape mismatch: {enhanced_text.shape} != {text_features.shape}"
+        assert enhanced_image.shape == image_features.shape, \
+            f"Image shape mismatch: {enhanced_image.shape} != {image_features.shape}"
+        
+        print(f"✓ Output shapes verified")
+        
+        # Test gradient flow
+        loss = enhanced_text.sum() + enhanced_image.sum()
+        loss.backward()
+        
+        has_grad = any(p.grad is not None for p in enhancer.parameters())
+        assert has_grad, "No gradients computed"
+        
+        print(f"✓ Gradient flow verified")
+        
+        # Test with single layer
+        enhancer_single = FeatureEnhancer(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            num_layers=1
+        ).to(device)
+        
+        enhanced_text_single, enhanced_image_single = enhancer_single(text_features, image_features)
+        assert enhanced_text_single.shape == text_features.shape
+        assert enhanced_image_single.shape == image_features.shape
+        
+        print(f"✓ Single-layer variant works")
+        
+        # Test FeatureEnhancerLayer directly
+        layer = FeatureEnhancerLayer(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout
+        ).to(device)
+        
+        text_out, image_out = layer(text_features, image_features)
+        assert text_out.shape == text_features.shape
+        assert image_out.shape == image_features.shape
+        
+        print(f"✓ FeatureEnhancerLayer tested directly")
+        
+        print("\n✓ TEST 5 PASSED")
+        return True
+        
+    except Exception as e:
+        print(f"\n✗ TEST 5 FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all tests."""
     print("\n" + "="*60)
@@ -277,7 +375,8 @@ def main():
         ("Data Loading", test_data_loading),
         ("Model Forward Pass", test_model_forward),
         ("Loss Computation", test_loss_computation),
-        ("Training Step", test_training_step)
+        ("Training Step", test_training_step),
+        ("Feature Enhancer", test_feature_enhancer)
     ]
     
     results = []
