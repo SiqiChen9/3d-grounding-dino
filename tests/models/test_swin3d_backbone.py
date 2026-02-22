@@ -294,6 +294,80 @@ class TestSwinTransformer3D:
         
         assert torch.allclose(output1, output2)
 
+    def test_multi_scale_output(self, device):
+        """Test multi-scale output: projects each scale to out_channels, flattens & concatenates."""
+        batch_size = 2
+        out_channels = 64
+        embed_dim = 48
+
+        model = SwinTransformer3D(
+            embed_dim=embed_dim,
+            depths=[1, 1],
+            num_heads=[2, 4],
+            out_channels=out_channels,
+            out_indices=(0, 1),
+        ).to(device)
+
+        # Input: 16×32×32 → patch embed (4×4×4) → 4×8×8
+        # Stage 0: 4×8×8 (=256 tokens, channels=48)
+        # Downsample   → 2×4×4 
+        # Stage 1: 2×4×4 (=32 tokens, channels=96)
+        # N_total = 256 + 32 = 288
+        x = torch.randn(batch_size, 1, 16, 32, 32, device=device)
+        output = model(x)
+
+        # Multi-scale returns (N_total, B, out_channels)
+        assert output.dim() == 3
+        assert output.shape[0] == 256 + 32  # N_total
+        assert output.shape[1] == batch_size
+        assert output.shape[2] == out_channels
+
+    def test_multi_scale_gradient_flow(self, device):
+        """Test that gradients flow through all scales in multi-scale mode."""
+        model = SwinTransformer3D(
+            embed_dim=48,
+            depths=[1, 1],
+            num_heads=[2, 4],
+            out_channels=64,
+            out_indices=(0, 1),
+        ).to(device)
+
+        x = torch.randn(1, 1, 16, 32, 32, device=device, requires_grad=True)
+        output = model(x)
+        loss = output.sum()
+        loss.backward()
+
+        assert x.grad is not None
+        # All projection layers should have gradients
+        for key, proj in model.output_projs.items():
+            for param in proj.parameters():
+                if param.requires_grad:
+                    assert param.grad is not None, f"No gradient for output_proj[{key}]"
+
+    def test_multi_scale_three_stages(self, device):
+        """Test multi-scale with 3 output stages (out_indices=(0, 1, 2))."""
+        batch_size = 1
+        out_channels = 64
+        embed_dim = 48
+
+        model = SwinTransformer3D(
+            embed_dim=embed_dim,
+            depths=[1, 1, 1],
+            num_heads=[2, 4, 8],
+            out_channels=out_channels,
+            out_indices=(0, 1, 2),
+        ).to(device)
+
+        # 16×32×32 → patch embed → 4×8×8
+        # Stage 0: 4×8×8 = 256 tokens (ch=48)
+        # Stage 1: 2×4×4 = 32 tokens  (ch=96)
+        # Stage 2: 1×2×2 = 4 tokens   (ch=192)
+        # N_total = 256 + 32 + 4 = 292
+        x = torch.randn(batch_size, 1, 16, 32, 32, device=device)
+        output = model(x)
+
+        assert output.shape == (292, batch_size, out_channels)
+
 
 class TestBackboneFeatureQuality:
     """Tests for backbone feature extraction quality."""

@@ -406,8 +406,23 @@ class SwinTransformer3D(nn.Module):
         ])
 
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.out_channels = out_channels
 
-        # Output projection layer (e.g., 768 -> 256)
+        # Per-scale output projection layers
+        # Each stage i has channel dim = embed_dim * 2^i
+        # Project each to out_channels (e.g., 256) for multi-scale concat
+        if out_channels is not None:
+            self.output_projs = nn.ModuleDict()
+            for i in self.out_indices:
+                stage_dim = int(embed_dim * 2 ** i)
+                if stage_dim != out_channels:
+                    self.output_projs[str(i)] = nn.Linear(stage_dim, out_channels)
+                else:
+                    self.output_projs[str(i)] = nn.Identity()
+        else:
+            self.output_projs = None
+
+        # Legacy single-scale projection (kept for backward compatibility)
         if out_channels is not None and out_channels != self.num_features:
             self.output_proj = nn.Linear(self.num_features, out_channels)
         else:
@@ -418,14 +433,17 @@ class SwinTransformer3D(nn.Module):
         Args:
             x: (B, C, D, H, W)
         Returns:
-            (B, D', H', W', C') - final stage features
-            OR
-            Tuple of features if out_indices has multiple values
+            If single out_index (legacy):
+                (B, D', H', W', C') - final stage features
+            If multiple out_indices:
+                (N_total, B, hidden_dim) - flattened & concatenated multi-scale features
+                where N_total = sum of D_i * H_i * W_i across selected stages
         """
         # Patch embedding
         x = self.patch_embed(x)  # (B, D', H', W', C)
 
         outs = []
+        out_stage_indices = []
         # Apply Swin blocks
         for i in range(self.num_layers):
             # Apply blocks in this layer
@@ -435,16 +453,32 @@ class SwinTransformer3D(nn.Module):
             # Record output if in out_indices
             if i in self.out_indices:
                 outs.append(x)
+                out_stage_indices.append(i)
 
             # Downsample
             x = self.downsample_layers[i](x)
 
-        # Compatibility mode: if only requesting the last layer (default behavior)
-        if self.out_indices == (self.num_layers - 1,):
+        # ── Single-scale mode (legacy, backward compatible) ──
+        if len(self.out_indices) == 1 and self.out_indices[0] == self.num_layers - 1:
             out = outs[0]
-            # Apply output projection if specified
             if self.output_proj is not None:
                 out = self.output_proj(out)  # (B, D', H', W', out_channels)
             return out
-        
-        return tuple(outs)
+
+        # ── Multi-scale mode: project, flatten, concat ──
+        B = outs[0].shape[0]
+        flat_features = []
+        for feat, stage_idx in zip(outs, out_stage_indices):
+            # feat: (B, D_i, H_i, W_i, C_i)
+            if self.output_projs is not None:
+                feat = self.output_projs[str(stage_idx)](feat)  # -> (B, D_i, H_i, W_i, out_channels)
+            # Flatten spatial dims: (B, D_i*H_i*W_i, C)
+            feat = feat.reshape(B, -1, feat.shape[-1])
+            flat_features.append(feat)
+
+        # Concat along token dimension: (B, N_total, C)
+        multi_scale_features = torch.cat(flat_features, dim=1)
+        # Convert to seq-first format: (N_total, B, C)
+        multi_scale_features = multi_scale_features.permute(1, 0, 2)
+
+        return multi_scale_features

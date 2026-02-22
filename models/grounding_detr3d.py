@@ -69,6 +69,7 @@ class GroundingDETR3D(nn.Module):
         backbone_depths: list = [2, 2, 6, 2],
         backbone_num_heads: list = [3, 6, 12, 24],
         backbone_window_size: tuple = (7, 7, 7),
+        backbone_out_indices: tuple = None,  # None = auto multi-scale (last 2 stages)
         # Decoder parameters
         num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
@@ -83,11 +84,19 @@ class GroundingDETR3D(nn.Module):
         self.num_queries = num_queries
         self.hidden_dim = hidden_dim
         
-        # Compute backbone output dimension
-        backbone_dim = int(backbone_embed_dim * 2 ** (len(backbone_depths) - 1))
+        # Determine backbone output indices
+        # Default: last 2 stages for multi-scale (e.g., (2, 3) for 4-stage backbone)
+        num_stages = len(backbone_depths)
+        if backbone_out_indices is None:
+            if num_stages >= 2:
+                backbone_out_indices = tuple(range(num_stages - 2, num_stages))
+            else:
+                backbone_out_indices = (num_stages - 1,)
+        self.backbone_out_indices = backbone_out_indices
+        self.multi_scale = len(backbone_out_indices) > 1
         
         # ═══════════════════════════════════════════════════════
-        # Component 1: Image Backbone (Swin3D)
+        # Component 1: Image Backbone (Swin3D) with multi-scale output
         # ═══════════════════════════════════════════════════════
         self.image_backbone = SwinTransformer3D(
             in_channels=1,
@@ -100,8 +109,8 @@ class GroundingDETR3D(nn.Module):
             qkv_bias=True,
             drop_rate=dropout,
             attn_drop_rate=dropout,
-            out_channels=hidden_dim,  # Project from 768 to hidden_dim (256)
-            out_indices=(len(backbone_depths) - 1,)  # Always output the last stage
+            out_channels=hidden_dim,  # Each scale projected to hidden_dim
+            out_indices=backbone_out_indices
         )
         
         # ═══════════════════════════════════════════════════════
@@ -158,7 +167,7 @@ class GroundingDETR3D(nn.Module):
                 - 'pred_logits': (B, num_queries, num_classes+1)
                 - 'pred_boxes': (B, num_queries, 6)
                 - 'vanilla_text_features': (B, num_classes, hidden_dim)
-                - 'vanilla_image_features': (B, D', H', W', C)
+                - 'vanilla_image_features': (N_total, B, hidden_dim) multi-scale
         """
         B = volumes.shape[0]
         
@@ -167,7 +176,16 @@ class GroundingDETR3D(nn.Module):
         # ═══════════════════════════════════════════════════════
         
         # Image features from backbone
-        vanilla_image_features = self.image_backbone(volumes)  # (B, D', H', W', C)
+        backbone_out = self.image_backbone(volumes)
+        
+        if self.multi_scale:
+            # Multi-scale output: backbone returns (N_total, B, hidden_dim)
+            image_features_flat = backbone_out  # already (N_total, B, C)
+        else:
+            # Legacy single-scale: backbone returns (B, D', H', W', C)
+            vanilla_image_features = backbone_out
+            image_features_permuted = vanilla_image_features.permute(0, 4, 1, 2, 3)
+            image_features_flat = image_features_permuted.flatten(2).permute(2, 0, 1)
         
         # Text features from pseudo generator
         vanilla_text_features = self.text_feature_generator(B)  # (B, num_classes, hidden_dim)
@@ -177,16 +195,7 @@ class GroundingDETR3D(nn.Module):
         # (Currently a placeholder - just passes through)
         # ═══════════════════════════════════════════════════════
         
-        # Reshape image features for enhancer
-        # (B, D', H', W', C) -> (B, C, D', H', W')
-        image_features_permuted = vanilla_image_features.permute(0, 4, 1, 2, 3)
-        D, H, W, C = vanilla_image_features.shape[1:]
-        
-        # Flatten for feature enhancer input
-        # (B, C, D', H', W') -> (D'*H'*W', B, C)
-        image_features_flat = image_features_permuted.flatten(2).permute(2, 0, 1)
-        
-        # Enhance (currently identity operation)
+        # image_features_flat: (N_total, B, hidden_dim)
         enhanced_text_features, enhanced_image_features = self.feature_enhancer(
             vanilla_text_features,
             image_features_flat
@@ -223,7 +232,7 @@ class GroundingDETR3D(nn.Module):
             'pred_logits': pred_logits,
             'pred_boxes': pred_boxes,
             'vanilla_text_features': vanilla_text_features,
-            'vanilla_image_features': vanilla_image_features
+            'vanilla_image_features': image_features_flat  # (N_total, B, hidden_dim)
         }
         
         return outputs
@@ -253,6 +262,7 @@ def build_model(config: dict) -> GroundingDETR3D:
         backbone_depths=model_config.get('backbone_depths', [2, 2, 6, 2]),
         backbone_num_heads=model_config.get('backbone_num_heads', [3, 6, 12, 24]),
         backbone_window_size=tuple(model_config.get('backbone_window_size', [7, 7, 7])),
+        backbone_out_indices=tuple(model_config.get('backbone_out_indices', [])) or None,
         num_encoder_layers=model_config.get('num_encoder_layers', 6),
         num_decoder_layers=model_config.get('num_decoder_layers', 6),
         num_heads=model_config.get('num_heads', 8),
