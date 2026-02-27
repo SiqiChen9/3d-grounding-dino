@@ -3,7 +3,7 @@ Unit tests for utils/metrics.py
 
 Tests:
 - compute_iou_3d: boundary cases, numerical correctness
-- compute_ap: empty predictions, perfect predictions, partial matches
+- compute_tp_fp_per_sample: TP/FP matching logic
 - compute_map: multi-class, multi-IoU thresholds
 """
 import pytest
@@ -13,7 +13,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from utils.metrics import compute_iou_3d, compute_ap, compute_map
+from utils.metrics import compute_iou_3d, compute_tp_fp_per_sample, compute_map
 
 
 class TestComputeIoU3D:
@@ -67,32 +67,35 @@ class TestComputeIoU3D:
         assert np.isclose(iou12, iou21)
 
 
-class TestComputeAP:
-    """Tests for compute_ap function."""
+class TestComputeTpFpPerSample:
+    """Tests for compute_tp_fp_per_sample function."""
     
     def test_empty_predictions(self):
-        """Test AP with no predictions is 0."""
+        """Test with no predictions returns empty arrays."""
         pred_boxes = np.zeros((0, 6))
         pred_scores = np.zeros(0)
         gt_boxes = np.random.rand(3, 6)
         
-        ap = compute_ap(pred_boxes, pred_scores, gt_boxes)
+        tp, scores, num_gt = compute_tp_fp_per_sample(pred_boxes, pred_scores, gt_boxes)
         
-        assert ap == 0.0
+        assert len(tp) == 0
+        assert len(scores) == 0
+        assert num_gt == 3
     
     def test_empty_ground_truth(self):
-        """Test AP with no ground truth is 0."""
+        """Test with no ground truth - all predictions are FP."""
         pred_boxes = np.random.rand(5, 6)
-        pred_scores = np.random.rand(5)
+        pred_scores = np.array([0.9, 0.8, 0.7, 0.6, 0.5])
         gt_boxes = np.zeros((0, 6))
         
-        ap = compute_ap(pred_boxes, pred_scores, gt_boxes)
+        tp, scores, num_gt = compute_tp_fp_per_sample(pred_boxes, pred_scores, gt_boxes)
         
-        assert ap == 0.0
+        assert len(tp) == 5
+        assert np.all(tp == 0)  # All false positives
+        assert num_gt == 0
     
     def test_perfect_predictions(self):
-        """Test AP with perfect predictions should be reasonable."""
-        # Create identical prediction and ground truth
+        """Test with perfect predictions - all should be TP."""
         gt_boxes = np.array([
             [0.3, 0.3, 0.3, 0.2, 0.2, 0.2],
             [0.7, 0.7, 0.7, 0.2, 0.2, 0.2]
@@ -100,31 +103,37 @@ class TestComputeAP:
         pred_boxes = gt_boxes.copy()
         pred_scores = np.array([0.9, 0.8])
         
-        ap = compute_ap(pred_boxes, pred_scores, gt_boxes, iou_threshold=0.5)
+        tp, scores, num_gt = compute_tp_fp_per_sample(pred_boxes, pred_scores, gt_boxes, iou_threshold=0.5)
         
-        # AP should be positive when predictions perfectly match
-        # Note: the exact value depends on the AP calculation implementation
-        assert ap > 0.0
+        assert num_gt == 2
+        assert np.sum(tp) == 2  # Both are true positives
     
     def test_no_matches(self):
-        """Test AP with no matching predictions."""
+        """Test with no matching predictions - all should be FP."""
         gt_boxes = np.array([[0.2, 0.2, 0.2, 0.1, 0.1, 0.1]])
         pred_boxes = np.array([[0.8, 0.8, 0.8, 0.1, 0.1, 0.1]])  # Far away
         pred_scores = np.array([0.9])
         
-        ap = compute_ap(pred_boxes, pred_scores, gt_boxes, iou_threshold=0.5)
+        tp, scores, num_gt = compute_tp_fp_per_sample(pred_boxes, pred_scores, gt_boxes, iou_threshold=0.5)
         
-        assert ap == 0.0
+        assert num_gt == 1
+        assert tp[0] == 0  # False positive
     
-    def test_ap_range(self):
-        """Test AP is in [0, 1] range."""
-        gt_boxes = np.random.rand(5, 6) * 0.5 + 0.25
-        pred_boxes = np.random.rand(10, 6) * 0.5 + 0.25
-        pred_scores = np.random.rand(10)
+    def test_greedy_matching(self):
+        """Test that higher score predictions get matched first."""
+        gt_boxes = np.array([[0.5, 0.5, 0.5, 0.2, 0.2, 0.2]])
+        # Two predictions that both match the GT
+        pred_boxes = np.array([
+            [0.5, 0.5, 0.5, 0.2, 0.2, 0.2],  # Perfect match
+            [0.5, 0.5, 0.5, 0.2, 0.2, 0.2],  # Also perfect match
+        ])
+        pred_scores = np.array([0.9, 0.8])  # First has higher score
         
-        ap = compute_ap(pred_boxes, pred_scores, gt_boxes)
+        tp, scores, num_gt = compute_tp_fp_per_sample(pred_boxes, pred_scores, gt_boxes, iou_threshold=0.5)
         
-        assert 0 <= ap <= 1
+        assert num_gt == 1
+        assert tp[0] == 1  # Higher score gets the match
+        assert tp[1] == 0  # Lower score is FP (GT already matched)
 
 
 class TestComputeMAP:

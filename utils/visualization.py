@@ -13,22 +13,24 @@ from scipy import ndimage
 
 
 # Class color map (can be customized)
+# Labels are 0-indexed: 0=liver, 1=spleen, 2=LK, 3=RK, 4=bowel
+# Background class (5) is shown in white
 CLASS_COLORS = {
-    0: (1.0, 1.0, 1.0),      # White - background
-    1: (1.0, 0.0, 0.0),      # Red - liver
-    2: (0.0, 1.0, 0.0),      # Green - spleen
-    3: (0.0, 0.0, 1.0),      # Blue - LK
-    4: (1.0, 1.0, 0.0),      # Yellow - RK
-    5: (1.0, 0.0, 1.0),      # Magenta- bowel
+    0: (1.0, 0.0, 0.0),      # Red - liver
+    1: (0.0, 1.0, 0.0),      # Green - spleen
+    2: (0.0, 0.0, 1.0),      # Blue - LK
+    3: (1.0, 1.0, 0.0),      # Yellow - RK
+    4: (1.0, 0.0, 1.0),      # Magenta - bowel
+    5: (1.0, 1.0, 1.0),      # White - background (should not appear in predictions)
 }
 
 CLASS_NAMES = {
-    0: 'background',
-    1: 'liver',
-    2: 'spleen',
-    3: 'LK',
-    4: 'RK',
-    5: 'bowel'
+    0: 'liver',
+    1: 'spleen',
+    2: 'LK',
+    3: 'RK',
+    4: 'bowel',
+    5: 'background'
 }
 
 
@@ -299,7 +301,7 @@ def visualize_single_slice(
     gt_boxes: Optional[List[np.ndarray]] = None,
     gt_labels: Optional[List[int]] = None,
     axis: str = 'axial',
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
     figsize: Tuple[int, int] = (12, 6)
 ) -> plt.Figure:
     """
@@ -315,7 +317,7 @@ def visualize_single_slice(
         gt_boxes: List of ground truth boxes (normalized)
         gt_labels: List of ground truth labels
         axis: View axis
-        score_threshold: Minimum score to display predictions
+        score_threshold: Minimum score to display predictions (default: 0.0, show all)
         figsize: Figure size
     
     Returns:
@@ -427,7 +429,7 @@ def visualize_multi_slice(
     gt_labels: Optional[List[int]] = None,
     num_slices: int = 9,
     axis: str = 'axial',
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
     figsize: Tuple[int, int] = (15, 10)
 ) -> plt.Figure:
     """
@@ -443,7 +445,7 @@ def visualize_multi_slice(
         gt_labels: List of ground truth labels
         num_slices: Number of slices to show
         axis: View axis
-        score_threshold: Minimum score to display
+        score_threshold: Minimum score to display (default: 0.0, show all)
         figsize: Figure size
     
     Returns:

@@ -5,7 +5,7 @@ Tests:
 - normalize_intensity: value range [0, 1], windowing
 - resize_volume: output size
 - mask_to_boxes_3d: bounding box format, normalization
-- apply_augmentation_3d: flip, rotation, intensity jitter
+- apply_augmentation_3d: rotation, scale, elastic deformation, intensity jitter
 """
 import pytest
 import numpy as np
@@ -167,37 +167,58 @@ class TestMaskToBoxes3D:
 
 
 class TestApplyAugmentation3D:
-    """Tests for apply_augmentation_3d function."""
+    """Tests for apply_augmentation_3d function (volume + mask interface)."""
+    
+    def _make_test_data(self, shape=(32, 64, 64)):
+        """Create test volume and mask."""
+        volume = np.random.rand(*shape).astype(np.float32)
+        mask = np.zeros(shape, dtype=np.int32)
+        # Add two labeled regions
+        d, h, w = shape
+        mask[d//4:d//2, h//4:h//2, w//4:w//2] = 1
+        mask[d//2:3*d//4, h//2:3*h//4, w//2:3*w//4] = 2
+        return volume, mask
     
     def test_output_shapes(self):
         """Test that output shapes match input."""
-        volume = np.random.randn(32, 64, 64).astype(np.float32)
-        boxes = [
-            {'box': np.array([0.5, 0.5, 0.5, 0.2, 0.2, 0.2]), 'label': 1}
-        ]
+        volume, mask = self._make_test_data()
         
-        aug_volume, aug_boxes = apply_augmentation_3d(volume, boxes)
+        aug_volume, aug_mask = apply_augmentation_3d(volume, mask)
         
         assert aug_volume.shape == volume.shape
-        assert len(aug_boxes) == len(boxes)
+        assert aug_mask.shape == mask.shape
     
-    def test_box_values_clipped(self):
-        """Test that all box values remain in [0, 1]."""
-        volume = np.random.randn(32, 64, 64).astype(np.float32)
-        boxes = [
-            {'box': np.array([0.9, 0.9, 0.9, 0.2, 0.2, 0.2]), 'label': 1},
-            {'box': np.array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2]), 'label': 2}
-        ]
+    def test_mask_labels_preserved(self):
+        """Test that mask labels are preserved (not interpolated)."""
+        volume, mask = self._make_test_data()
         
-        # Apply multiple times to trigger augmentations
         for _ in range(10):
-            aug_volume, aug_boxes = apply_augmentation_3d(
-                volume, boxes, 
-                flip_prob=0.5, 
-                rotate_prob=0.3
+            aug_volume, aug_mask = apply_augmentation_3d(
+                volume, mask,
+                rotate_prob=0.5,
+                rotate_range=30.0,
+                scale_prob=0.5,
+                elastic_prob=0.3
             )
             
-            for box_dict in aug_boxes:
+            # Mask should only contain original labels (0, 1, 2)
+            unique_labels = set(np.unique(aug_mask))
+            assert unique_labels.issubset({0, 1, 2}), f"Unexpected labels: {unique_labels}"
+    
+    def test_boxes_from_augmented_mask(self):
+        """Test that boxes extracted from augmented mask are valid."""
+        volume, mask = self._make_test_data()
+        
+        for _ in range(10):
+            aug_volume, aug_mask = apply_augmentation_3d(
+                volume, mask,
+                rotate_prob=0.5,
+                rotate_range=30.0,
+                scale_prob=0.5
+            )
+            
+            boxes = mask_to_boxes_3d(aug_mask, min_volume=10)
+            for box_dict in boxes:
                 box = box_dict['box']
                 assert (box >= 0).all(), "Box value below 0"
                 assert (box <= 1).all(), "Box value above 1"
@@ -205,30 +226,33 @@ class TestApplyAugmentation3D:
     def test_intensity_jitter(self):
         """Test intensity jittering."""
         volume = np.ones((16, 32, 32), dtype=np.float32) * 0.5
-        boxes = [{'box': np.array([0.5, 0.5, 0.5, 0.2, 0.2, 0.2]), 'label': 1}]
+        mask = np.zeros((16, 32, 32), dtype=np.int32)
         
-        aug_volume, _ = apply_augmentation_3d(
-            volume, boxes,
-            flip_prob=0.0,
+        aug_volume, aug_mask = apply_augmentation_3d(
+            volume, mask,
             rotate_prob=0.0,
+            scale_prob=0.0,
+            elastic_prob=0.0,
             intensity_jitter=0.1
         )
         
         # Values should be perturbed
         assert not np.allclose(aug_volume, volume)
+        # Mask should be unchanged (intensity jitter doesn't affect mask)
+        assert np.array_equal(aug_mask, mask)
     
     def test_no_augmentation(self):
         """Test with all augmentations disabled."""
-        volume = np.random.randn(16, 32, 32).astype(np.float32)
-        boxes = [{'box': np.array([0.5, 0.5, 0.5, 0.2, 0.2, 0.2]), 'label': 1}]
+        volume, mask = self._make_test_data((16, 32, 32))
         
-        aug_volume, aug_boxes = apply_augmentation_3d(
-            volume, boxes,
-            flip_prob=0.0,
+        aug_volume, aug_mask = apply_augmentation_3d(
+            volume, mask,
             rotate_prob=0.0,
+            scale_prob=0.0,
+            elastic_prob=0.0,
             intensity_jitter=0.0
         )
         
         # Should be identical (copy)
         assert np.array_equal(aug_volume, volume)
-        assert np.array_equal(aug_boxes[0]['box'], boxes[0]['box'])
+        assert np.array_equal(aug_mask, mask)

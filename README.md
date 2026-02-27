@@ -61,12 +61,14 @@ The current MVP is **complete and functional**. All core components have been im
 
 ### ✅ Data Pipeline
 - **NIfTI segmentation loading** with automatic 3D bounding box extraction
-- **DICOM/JPEG slice loading** into volumetric arrays
-  - `image_format='dcm'`: Load DICOM files with HU conversion (default, for full training)
+- **DICOM/JPEG/NumPy data loading** into volumetric arrays
+  - `image_format='numpy'`: Load pre-converted .npz files (fastest, recommended)
+  - `image_format='dcm'`: Load DICOM files with HU conversion
   - `image_format='jpeg'`: Load JPEG files (for small-scale testing)
+- **NumPy converter tool** for pre-processing DICOM to .npz format (~4x faster I/O)
 - **Intensity normalization** for CT Hounsfield units
-- **Volume resizing** with trilinear interpolation to `(64, 64, 64)`
-- **Data augmentation** with 3D rotations and flips (configurable)
+- **Proportional volume resizing** based on `target_width` (default: 64) with trilinear interpolation, preserving aspect ratio
+- **Data augmentation** with 3D rotations (±30°), scaling, elastic deformation, and intensity jitter (configurable, no flipping for anatomical correctness)
 - **PyTorch Dataset integration** with custom collate function for variable-length boxes
 - **Train/validation split** with configurable ratio
 
@@ -275,13 +277,14 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 
 ### Data Configuration
 - **dataset_path**: Path to dataset directory
-- **image_size**: Target volume size `[D, H, W]` (default: `[64, 64, 64]`)
+- **target_width**: Target width (2nd dimension) for proportional scaling (default: `64`). All dimensions scale proportionally based on this value.
 - **batch_size**: Training batch size (default: 2)
 - **num_workers**: DataLoader workers (default: 4)
 - **train_split**: Train/validation split ratio (default: 0.8)
 - **augment**: Enable/disable data augmentation (default: false)
-- **image_format**: Image format to load (default: `dcm`)
-  - `dcm`: Load DICOM files with HU conversion (for full training)
+- **image_format**: Image format to load (default: `numpy`)
+  - `numpy`: Load pre-converted .npz files (fastest, recommended for training). If no .npz files are found, automatically converts DICOM files to .npz format and then loads them. 
+  - `dcm`: Load DICOM files with HU conversion
   - `jpeg`: Load JPEG files (for small-scale testing)
 
 ### Model Configuration
@@ -324,7 +327,7 @@ All hyperparameters are controlled via `configs/default_config.yaml`:
 ```yaml
 data:
   dataset_path: ./datasets
-  image_size: [64, 64, 64]
+  target_width: 64  # Proportional scaling based on width
   batch_size: 2
   augment: false
 

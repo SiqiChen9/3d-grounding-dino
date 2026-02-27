@@ -1,19 +1,22 @@
 # 3D Grounding-DETR Configuration
 
 data:
-  dataset_path: ./datasets
-  image_size: [64, 64, 64]  # D, H, W
-  batch_size: 16
+  dataset_path: /home/woody/iwi5/iwi5378h/rsna2023
+  target_width: 128 # Target width (2nd dimension), other dimensions scale proportionally
+  batch_size: 2
   num_workers: 12
-  train_split: 0.8
+  train_split: 0.7   # 70% for training
+  val_split: 0.15    # 15% for validation
+  test_split: 0.15   # 15% for testing
+  random_seed: 0     # Fixed seed for reproducible splits
   augment: true   # Disable if overfitting test
-  image_format: dcm # dcm for DICOM, jpeg for JPEG
+  image_format: numpy # dcm for DICOM, jpeg for JPEG, numpy for pre-converted .npz files
   persistent_workers: true
   prefetch_factor: 2
 
 model:
   num_classes: 5
-  num_queries: 10
+  num_queries: 100
   hidden_dim: 256
   backbone_embed_dim: 96
   backbone_depths: [2, 2, 6, 2]
@@ -26,16 +29,17 @@ model:
   num_decoder_layers: 6
   num_heads: 8
   dim_feedforward: 2048
-  dropout: 0.1    # Disable if overfitting test
+  dropout: 0.0
+  trainable_pseudo_features: false
 
 training:
-  epochs: 100
+  epochs: 500
   lr: 0.0001
-  weight_decay: 0.0001  # Disable if overfitting test
-  warmup_epochs: 5
-  clip_max_norm: 5.0
+  weight_decay: 0.01  # Disable if overfitting test
+  warmup_epochs: 50
+  clip_max_norm: 100.0
   log_interval: 10
-  val_interval: 5
+  val_interval: 10
   save_interval: 10
 
 loss:
@@ -45,7 +49,7 @@ loss:
   weight_ce: 1.0
   weight_l1: 5.0
   weight_giou: 2.0
-  eos_coef: 0.01
+  eos_coef: 0.1
 
 paths:
   checkpoint_dir: ./checkpoints

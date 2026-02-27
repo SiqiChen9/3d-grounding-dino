@@ -28,32 +28,53 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def create_dataloaders(config: dict):
-    """Create train and validation dataloaders."""
+def create_dataloaders(config: dict, logger: TrainingLogger):
+    """Create train and validation dataloaders.
+
+    The split uses a fixed random seed for reproducibility.
+    """
     data_cfg = config['data']
+    random_seed = data_cfg.get('random_seed', 42)
     
     # Create full dataset
     full_dataset = RSNAVolumeDataset(
         data_dir=data_cfg['dataset_path'],
-        volume_size=tuple(data_cfg['image_size']),
+        target_width=data_cfg['target_width'],
         train=True,
         augment=data_cfg.get('augment', True),  # Read from config, default to True
         image_format=data_cfg.get('image_format', 'dcm'),  # 'dcm' or 'jpeg'
     )
     
-    # Split into train/val
-    train_size = int(len(full_dataset) * data_cfg.get('train_split', 0.8))
-    val_size = len(full_dataset) - train_size
+    # Split into train/val/test (70/15/15 by default)
+    train_ratio = data_cfg.get('train_split', 0.7)
+    val_ratio = data_cfg.get('val_split', 0.15)
+    test_ratio = data_cfg.get('test_split', 0.15)
     
-    if val_size > 0:
-        train_dataset, val_dataset = random_split(
-            full_dataset,
-            [train_size, val_size],
-            generator=torch.Generator().manual_seed(42)
-        )
-    else:
-        train_dataset = full_dataset
-        val_dataset = None
+    # Normalize ratios to ensure they sum to 1
+    total_ratio = train_ratio + val_ratio + test_ratio
+    train_ratio /= total_ratio
+    val_ratio /= total_ratio
+    test_ratio /= total_ratio
+    
+    total_size = len(full_dataset)
+    train_size = int(total_size * train_ratio)
+    val_size = int(total_size * val_ratio)
+    test_size = total_size - train_size - val_size  # Remaining goes to test
+    
+    logger.info(f"Dataset split: train={train_size}, val={val_size}, test={test_size} (total={total_size})")
+    
+    # Split dataset with fixed seed for reproducibility
+    train_dataset, val_dataset, test_dataset = random_split(
+        full_dataset,
+        [train_size, val_size, test_size],
+        generator=torch.Generator().manual_seed(random_seed)
+    )
+    
+    # Log file IDs for each split (remove after verification)
+    def _get_ids(subset): return [full_dataset.seg_files[i].replace('.nii','') for i in subset.indices]
+    logger.info(f"Train IDs: {_get_ids(train_dataset)}")
+    logger.info(f"Val IDs: {_get_ids(val_dataset)}")
+    logger.info(f"Test IDs: {_get_ids(test_dataset)}")
     
     # DataLoader settings for better performance
     num_workers = data_cfg.get('num_workers', 0)
@@ -72,18 +93,16 @@ def create_dataloaders(config: dict):
         prefetch_factor=prefetch_factor
     )
     
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=data_cfg['batch_size'],
-            shuffle=False,
-            num_workers=num_workers,
-            collate_fn=collate_fn,
-            pin_memory=True,
-            persistent_workers=persistent_workers,
-            prefetch_factor=prefetch_factor
-        )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=data_cfg['batch_size'],
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor
+    )
     
     return train_loader, val_loader
 
@@ -324,7 +343,7 @@ def main():
     
     # Create dataloaders
     logger.info("Creating dataloaders...")
-    train_loader, val_loader = create_dataloaders(config)
+    train_loader, val_loader = create_dataloaders(config, logger)
     logger.log_dataset_info(train_loader, val_loader)
     
     # Create model

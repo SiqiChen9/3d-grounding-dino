@@ -88,14 +88,16 @@ def resize_volume(
 
 def mask_to_boxes_3d(
     mask: np.ndarray,
-    min_volume: int = 100
+    min_volume: int = 50,
+    merge_per_label: bool = True
 ) -> List[dict]:
     """
     Convert segmentation mask to 3D bounding boxes.
     
     Args:
         mask: Binary or multi-label mask (D, H, W)
-        min_volume: Minimum volume (voxels) for valid boxes
+        min_volume: Minimum volume (voxels) for valid components (noise filter)
+        merge_per_label: If True, merge all boxes of same label into one
     
     Returns:
         List of boxes, each dict with:
@@ -156,65 +158,201 @@ def mask_to_boxes_3d(
                 'label': int(label)
             })
     
+    # Merge boxes per label if requested
+    if merge_per_label and boxes:
+        merged = {}
+        for b in boxes:
+            label = b['label']
+            box = b['box']  # cx, cy, cz, w, h, d
+            x1, y1, z1 = box[0] - box[3]/2, box[1] - box[4]/2, box[2] - box[5]/2
+            x2, y2, z2 = box[0] + box[3]/2, box[1] + box[4]/2, box[2] + box[5]/2
+            if label not in merged:
+                merged[label] = [x1, y1, z1, x2, y2, z2]
+            else:
+                merged[label] = [
+                    min(merged[label][0], x1), min(merged[label][1], y1), min(merged[label][2], z1),
+                    max(merged[label][3], x2), max(merged[label][4], y2), max(merged[label][5], z2)
+                ]
+        boxes = [{'box': np.array([
+            (m[0]+m[3])/2, (m[1]+m[4])/2, (m[2]+m[5])/2,
+            m[3]-m[0], m[4]-m[1], m[5]-m[2]
+        ]), 'label': l} for l, m in merged.items()]
+    
     return boxes
+
+
+def elastic_deformation_3d(
+    volume: np.ndarray,
+    mask: np.ndarray,
+    alpha: float = 15.0,
+    sigma: float = 3.0
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply elastic deformation to volume and mask using shared displacement fields.
+    
+    Args:
+        volume: Input volume (D, H, W)
+        mask: Segmentation mask (D, H, W)
+        alpha: Deformation intensity
+        sigma: Gaussian smoothing sigma
+        
+    Returns:
+        Deformed volume and deformed mask
+    """
+    shape = volume.shape
+    
+    # Generate random displacement fields
+    dz = ndimage.gaussian_filter(np.random.randn(*shape) * alpha, sigma, mode='reflect')
+    dy = ndimage.gaussian_filter(np.random.randn(*shape) * alpha, sigma, mode='reflect')
+    dx = ndimage.gaussian_filter(np.random.randn(*shape) * alpha, sigma, mode='reflect')
+    
+    # Create coordinate grids
+    z, y, x = np.meshgrid(
+        np.arange(shape[0]),
+        np.arange(shape[1]),
+        np.arange(shape[2]),
+        indexing='ij'
+    )
+    
+    # Apply displacement
+    indices = [
+        np.clip(z + dz, 0, shape[0] - 1),
+        np.clip(y + dy, 0, shape[1] - 1),
+        np.clip(x + dx, 0, shape[2] - 1)
+    ]
+    
+    deformed_volume = ndimage.map_coordinates(volume, indices, order=1, mode='constant', cval=0)
+    deformed_mask = ndimage.map_coordinates(mask.astype(np.float64), indices, order=0, mode='constant', cval=0)  # nearest for labels
+    
+    return deformed_volume, deformed_mask
+
+
+def rotate_volume_3d(
+    volume: np.ndarray,
+    angle: float,
+    axes: Tuple[int, int] = (1, 2),
+    order: int = 1
+) -> np.ndarray:
+    """
+    Rotate volume by arbitrary angle in specified plane.
+    
+    Args:
+        volume: Input volume (D, H, W)
+        angle: Rotation angle in degrees
+        axes: Plane of rotation (default: XY plane)
+        order: Interpolation order (1=linear for volume, 0=nearest for mask)
+        
+    Returns:
+        Rotated volume
+    """
+    return ndimage.rotate(volume, angle, axes=axes, reshape=False, order=order, mode='constant', cval=0)
+
+
+def random_scale_volume(
+    volume: np.ndarray,
+    scale: float,
+    order: int = 1
+) -> np.ndarray:
+    """
+    Scale a volume and crop/pad back to original size.
+    
+    Args:
+        volume: Input volume (D, H, W)
+        scale: Scale factor
+        order: Interpolation order (1=linear for volume, 0=nearest for mask)
+        
+    Returns:
+        Scaled volume with original shape
+    """
+    original_shape = np.array(volume.shape)
+    
+    scaled_volume = ndimage.zoom(volume, scale, order=order)
+    actual_scaled_shape = np.array(scaled_volume.shape)
+    
+    result_volume = np.zeros(original_shape, dtype=volume.dtype)
+    
+    if scale > 1.0:
+        # Crop from center
+        start = (actual_scaled_shape - original_shape) // 2
+        end = start + original_shape
+        result_volume = scaled_volume[
+            start[0]:end[0],
+            start[1]:end[1],
+            start[2]:end[2]
+        ]
+    else:
+        # Pad with zeros
+        start = (original_shape - actual_scaled_shape) // 2
+        end = start + actual_scaled_shape
+        result_volume[
+            start[0]:end[0],
+            start[1]:end[1],
+            start[2]:end[2]
+        ] = scaled_volume
+    
+    return result_volume
 
 
 def apply_augmentation_3d(
     volume: np.ndarray,
-    boxes: List[dict],
-    flip_prob: float = 0.5,
-    rotate_prob: float = 0.3,
+    mask: np.ndarray,
+    rotate_prob: float = 0.5,
+    rotate_range: float = 30.0,
+    scale_prob: float = 0.5,
+    scale_range: Tuple[float, float] = (0.85, 1.15),
+    elastic_prob: float = 0.3,
+    elastic_alpha: float = 15.0,
+    elastic_sigma: float = 3.0,
     intensity_jitter: float = 0.1
-) -> Tuple[np.ndarray, List[dict]]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Apply 3D augmentations to volume and boxes.
+    Apply 3D augmentations to volume and mask jointly.
+    Bounding boxes are extracted from the augmented mask afterwards.
+    Designed for human CT scans - no flipping (anatomically incorrect).
     
     Args:
-        volume: Input volume (D, H, W)
-        boxes: List of bounding boxes
-        flip_prob: Probability of random flip
-        rotate_prob: Probability of 90-degree rotation
+        volume: Input volume (D, H, W), normalized to [0, 1]
+        mask: Segmentation mask (D, H, W), integer labels
+        rotate_prob: Probability of random rotation
+        rotate_range: Max rotation angle in degrees (±rotate_range)
+        scale_prob: Probability of random scaling
+        scale_range: Range of scale factors (min, max)
+        elastic_prob: Probability of elastic deformation
+        elastic_alpha: Elastic deformation intensity
+        elastic_sigma: Elastic deformation smoothness
         intensity_jitter: Standard deviation for intensity jittering
     
     Returns:
-        Augmented volume and boxes
+        Augmented volume and augmented mask
     """
     aug_volume = volume.copy()
-    aug_boxes = [box.copy() for box in boxes]
+    aug_mask = mask.copy()
     
-    # Random flip along x-axis
-    if np.random.rand() < flip_prob:
-        aug_volume = np.flip(aug_volume, axis=2)
-        for box in aug_boxes:
-            box['box'][0] = 1.0 - box['box'][0]  # cx
-    
-    # Random flip along y-axis
-    if np.random.rand() < flip_prob:
-        aug_volume = np.flip(aug_volume, axis=1)
-        for box in aug_boxes:
-            box['box'][1] = 1.0 - box['box'][1]  # cy
-    
-    # Random 90-degree rotation in xy plane
+    # Random rotation in XY plane (±rotate_range degrees)
     if np.random.rand() < rotate_prob:
-        k = np.random.randint(1, 4)  # 90, 180, or 270 degrees
-        aug_volume = np.rot90(aug_volume, k=k, axes=(1, 2))
-        
-        # Rotate boxes (simplified - only works for k=2, 180 degrees)
-        if k == 2:
-            for box in aug_boxes:
-                box['box'][0] = 1.0 - box['box'][0]
-                box['box'][1] = 1.0 - box['box'][1]
+        angle = np.random.uniform(-rotate_range, rotate_range)
+        aug_volume = rotate_volume_3d(aug_volume, angle, axes=(1, 2), order=1)
+        aug_mask = rotate_volume_3d(aug_mask, angle, axes=(1, 2), order=0).astype(mask.dtype)
     
-    # Intensity jittering
+    # Random scaling
+    if np.random.rand() < scale_prob:
+        scale = np.random.uniform(scale_range[0], scale_range[1])
+        aug_volume = random_scale_volume(aug_volume, scale, order=1)
+        aug_mask = random_scale_volume(aug_mask, scale, order=0).astype(mask.dtype)
+    
+    # Elastic deformation
+    if np.random.rand() < elastic_prob:
+        aug_volume, aug_mask = elastic_deformation_3d(
+            aug_volume, aug_mask, alpha=elastic_alpha, sigma=elastic_sigma
+        )
+        aug_mask = aug_mask.astype(mask.dtype)
+    
+    # Intensity jittering (volume only, not mask)
     if intensity_jitter > 0:
         noise = np.random.normal(0, intensity_jitter, aug_volume.shape)
         aug_volume = np.clip(aug_volume + noise, 0, 1)
     
-    # Clip all box coordinates to [0, 1] after all transformations
-    for box in aug_boxes:
-        box['box'] = np.clip(box['box'], 0.0, 1.0)
-    
-    return aug_volume, aug_boxes
+    return aug_volume, aug_mask
 
 
 def collate_fn(batch: List[dict]) -> dict:

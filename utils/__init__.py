@@ -1,6 +1,6 @@
 """Utility modules for 3D Grounding-DETR."""
 
-from .metrics import compute_iou_3d, compute_ap, compute_map
+from .metrics import compute_iou_3d, compute_map
 from .visualization import (
     visualize_single_slice,
     visualize_multi_slice,
@@ -17,7 +17,6 @@ from .logger import (
 __all__ = [
     # Metrics
     'compute_iou_3d',
-    'compute_ap', 
     'compute_map',
     # Visualization
     'visualize_single_slice',
