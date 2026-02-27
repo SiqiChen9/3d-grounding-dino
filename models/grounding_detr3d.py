@@ -120,7 +120,7 @@ class GroundingDETR3D(nn.Module):
             hidden_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
-            num_layers=1
+            num_layers=num_encoder_layers
         )
         
         # ═══════════════════════════════════════════════════════
@@ -132,6 +132,13 @@ class GroundingDETR3D(nn.Module):
             image_feature_dim=hidden_dim,
             text_feature_dim=hidden_dim
         )
+        
+        # ═══════════════════════════════════════════════════════
+        # Learnable content queries (added to selected queries)
+        # Following official Grounding DINO implementation
+        # ═══════════════════════════════════════════════════════
+        self.tgt_embed = nn.Embedding(num_queries, hidden_dim)
+        nn.init.normal_(self.tgt_embed.weight)
         
         # ═══════════════════════════════════════════════════════
         # Component 5: Cross-Modality Decoder
@@ -205,6 +212,10 @@ class GroundingDETR3D(nn.Module):
             B
         )  # (num_queries, B, hidden_dim)
         
+        # Add learnable content queries (following official Grounding DINO)
+        # tgt_embed: (num_queries, hidden_dim) -> (num_queries, B, hidden_dim)
+        tgt = self.tgt_embed.weight.unsqueeze(1).repeat(1, B, 1) + selected_queries
+        
         # ═══════════════════════════════════════════════════════
         # Step 4: Cross-modality decoding
         # ═══════════════════════════════════════════════════════
@@ -212,7 +223,7 @@ class GroundingDETR3D(nn.Module):
         pred_logits, pred_boxes = self.decoder(
             enhanced_image_features,  # (N, B, hidden_dim)
             enhanced_text_features,   # (B, num_classes, hidden_dim)
-            selected_queries          # (num_queries, B, hidden_dim)
+            tgt                       # (num_queries, B, hidden_dim)
         )
         
         # ═══════════════════════════════════════════════════════
