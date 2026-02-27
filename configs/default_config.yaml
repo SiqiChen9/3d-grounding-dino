@@ -26,14 +26,15 @@ model:
   num_decoder_layers: 6
   num_heads: 8
   dim_feedforward: 2048
-  dropout: 0.3    # Disable if overfitting test
+  dropout: 0.0
+  trainable_pseudo_features: false
 
 training:
   epochs: 500
   lr: 0.0001
   weight_decay: 0.01  # Disable if overfitting test
-  warmup_epochs: 20
-  clip_max_norm: 20.0
+  warmup_epochs: 50
+  clip_max_norm: 100.0
   log_interval: 10
   val_interval: 10
   save_interval: 10
