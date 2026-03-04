@@ -23,8 +23,6 @@ model:
   backbone_num_heads: [3, 6, 12, 24]
   backbone_window_size: [7, 7, 7]
   backbone_out_indices: [2, 3]  # Multi-scale: which Swin stages to output (default: last 2)
-  #   [2, 3]     → Stage2 (8³=512) + Stage3 (4³=64) = 576 tokens
-  #   [1, 2, 3]  → Stage1 (16³) + Stage2 (8³) + Stage3 (4³) = 4160 tokens
   num_encoder_layers: 6
   num_decoder_layers: 6
   num_heads: 8
