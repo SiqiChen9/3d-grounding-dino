@@ -317,6 +317,8 @@ def main():
                        help='Use large FC network for sanity check (overfitting test)')
     parser.add_argument('--run-name', type=str, default=None,
                        help='Name for this training run (default: timestamp)')
+    parser.add_argument('--pretrained-backbone', type=str, default=None,
+                       help='Path to pretrained Swin3D backbone checkpoint')
     
     args = parser.parse_args()
     
@@ -356,6 +358,12 @@ def main():
     else:
         model = build_model(config)
     model = model.to(device)
+    
+    # Load pretrained backbone if specified
+    if args.pretrained_backbone:
+        logger.info(f"Loading pretrained backbone from: {args.pretrained_backbone}")
+        model.load_pretrained_backbone(args.pretrained_backbone)
+        logger.info("Pretrained backbone loaded successfully")
     
     # Log model info
     logger.log_model_info(model)
