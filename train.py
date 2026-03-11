@@ -317,8 +317,6 @@ def main():
                        help='Use large FC network for sanity check (overfitting test)')
     parser.add_argument('--run-name', type=str, default=None,
                        help='Name for this training run (default: timestamp)')
-    parser.add_argument('--pretrained-backbone', type=str, default=None,
-                       help='Path to pretrained Swin3D backbone checkpoint')
     
     args = parser.parse_args()
     
@@ -359,11 +357,18 @@ def main():
         model = build_model(config)
     model = model.to(device)
     
-    # Load pretrained backbone if specified
-    if args.pretrained_backbone:
-        logger.info(f"Loading pretrained backbone from: {args.pretrained_backbone}")
-        model.load_pretrained_backbone(args.pretrained_backbone)
+    # Load pretrained backbone if specified in config
+    pretrained_path = config['model'].get('pretrained_backbone')
+    if pretrained_path:
+        logger.info(f"Loading pretrained backbone from: {pretrained_path}")
+        model.load_pretrained_backbone(pretrained_path)
         logger.info("Pretrained backbone loaded successfully")
+    
+    # Freeze backbone if specified in config
+    if config['model'].get('freeze_backbone', False):
+        for param in model.image_backbone.parameters():
+            param.requires_grad = False
+        logger.info("Backbone parameters frozen")
     
     # Log model info
     logger.log_model_info(model)
