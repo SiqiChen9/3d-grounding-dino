@@ -49,13 +49,6 @@ class LanguageGuidedQuerySelection(nn.Module):
         else:
             self.text_proj = nn.Identity()
 
-        # Learnable content queries — semantic part of mixed query init
-        # Shape: (num_queries, hidden_dim)
-        self.content_queries = nn.Parameter(
-            torch.randn(num_queries, hidden_dim)
-        )
-        nn.init.xavier_uniform_(self.content_queries)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -116,18 +109,14 @@ class LanguageGuidedQuerySelection(nn.Module):
             index=topk_idx_expanded
         )  # (B, actual_k, D)
 
-        # Step 6: Mix position (selected features) + content (learnable)
+        # Step 6: Pad if needed (when image tokens < num_queries)
         if actual_k < self.num_queries:
-            # Not enough image tokens — pad remaining slots with pure content queries
-            content_part = self.content_queries.unsqueeze(0).expand(B, -1, -1)  # (B, num_queries, D)
-            # First actual_k slots: position + content
-            mixed_queries = content_part.clone()
-            mixed_queries[:, :actual_k, :] = selected_features + content_part[:, :actual_k, :]
-        else:
-            content_part = self.content_queries.unsqueeze(0).expand(B, -1, -1)
-            mixed_queries = selected_features + content_part  # (B, num_queries, D)
+            pad = torch.zeros(B, self.num_queries - actual_k, D,
+                              device=selected_features.device,
+                              dtype=selected_features.dtype)
+            selected_features = torch.cat([selected_features, pad], dim=1)  # (B, num_queries, D)
 
         # Step 7: Transpose to decoder format (seq, batch, dim)
-        queries = mixed_queries.permute(1, 0, 2)  # (num_queries, B, D)
+        queries = selected_features.permute(1, 0, 2)  # (num_queries, B, D)
         
         return queries

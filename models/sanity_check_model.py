@@ -152,8 +152,11 @@ def build_sanity_check_model(config: dict) -> LargeFullyConnectedNet:
     model_config = config.get('model', {})
     data_config = config.get('data', {})
     
-    # Get input size from data config
-    input_size = tuple(data_config.get('image_size', [128, 128, 128]))
+    # Get target width from data config and compute a default input size
+    # The actual input size varies per sample, but we need a fixed size for this simple model
+    target_width = data_config.get('target_width', 64)
+    # Assume a typical volume ratio, using target_width for all dimensions as a baseline
+    input_size = (target_width, target_width, target_width)
     
     model = LargeFullyConnectedNet(
         input_size=input_size,
