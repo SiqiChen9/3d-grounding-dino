@@ -128,6 +128,64 @@ class TestGroundingDETR3D:
         assert num_params > 0
         assert isinstance(num_params, int)
 
+    def test_multi_scale_increases_tokens(self, device, num_classes, num_queries, hidden_dim, small_volume_size):
+        """Test that multi-scale backbone produces more image tokens than single-scale."""
+        D, H, W = small_volume_size
+
+        # Multi-scale model: out_indices=(0, 1) — default for 2-stage backbone
+        multi_model = GroundingDETR3D(
+            num_classes=num_classes,
+            num_queries=num_queries,
+            hidden_dim=hidden_dim,
+            backbone_embed_dim=48,
+            backbone_depths=[1, 1],
+            backbone_num_heads=[2, 4],
+            backbone_out_indices=(0, 1),
+            num_encoder_layers=1,
+            num_decoder_layers=1,
+            num_heads=4,
+            dim_feedforward=256,
+        ).to(device)
+
+        multi_model.eval()
+        x = torch.randn(1, 1, D, H, W, device=device)
+        with torch.no_grad():
+            output = multi_model(x)
+
+        # vanilla_image_features should be (N_total, B, hidden_dim) with N_total > single-scale
+        img_feat = output['vanilla_image_features']
+        assert img_feat.dim() == 3
+        # For 16×32×32 input with 2 stages: stage0=4×8×8=256, stage1=2×4×4=32 → 288
+        assert img_feat.shape[0] == 288
+        assert img_feat.shape[2] == hidden_dim
+
+    def test_explicit_backbone_out_indices(self, device, num_classes, hidden_dim, small_volume_size):
+        """Test explicit backbone_out_indices=(0,) for single-stage legacy mode."""
+        D, H, W = small_volume_size
+        num_queries = 50
+
+        model = GroundingDETR3D(
+            num_classes=num_classes,
+            num_queries=num_queries,
+            hidden_dim=hidden_dim,
+            backbone_embed_dim=48,
+            backbone_depths=[1, 1, 1],
+            backbone_num_heads=[2, 4, 8],
+            backbone_out_indices=(2,),  # single last stage → legacy path
+            num_encoder_layers=1,
+            num_decoder_layers=1,
+            num_heads=4,
+            dim_feedforward=256,
+        ).to(device)
+
+        model.eval()
+        x = torch.randn(1, 1, D, H, W, device=device)
+        with torch.no_grad():
+            output = model(x)
+
+        assert output['pred_logits'].shape == (1, num_queries, num_classes + 1)
+        assert output['pred_boxes'].shape == (1, num_queries, 6)
+
 
 class TestBuildModel:
     """Tests for build_model function."""
