@@ -23,6 +23,8 @@ model:
   backbone_num_heads: [3, 6, 12, 24]
   backbone_window_size: [7, 7, 7]
   backbone_out_indices: [2, 3]  # Multi-scale: which Swin stages to output (default: last 2)
+  pretrained_backbone: checkpoints/pretrain/pretrained_backbone.pth # Path to pretrained Swin3D backbone checkpoint, null = train from scratch
+  freeze_backbone: true # If true, freeze backbone parameters (only train decoder/heads)
   num_encoder_layers: 6
   num_decoder_layers: 6
   num_heads: 8

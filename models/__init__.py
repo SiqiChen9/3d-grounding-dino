@@ -7,6 +7,7 @@ from .query_selection import LanguageGuidedQuerySelection
 from .cross_modality_decoder import CrossModalityDecoder
 from .grounding_detr3d import GroundingDETR3D, build_model
 from .sanity_check_model import LargeFullyConnectedNet, build_sanity_check_model
+from .swin3d_classifier import Swin3DClassifier, build_pretrain_model
 
 __all__ = [
     'SwinTransformer3D',
@@ -17,5 +18,7 @@ __all__ = [
     'GroundingDETR3D',
     'build_model',
     'LargeFullyConnectedNet',
-    'build_sanity_check_model'
+    'build_sanity_check_model',
+    'Swin3DClassifier',
+    'build_pretrain_model',
 ]

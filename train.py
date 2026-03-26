@@ -357,6 +357,19 @@ def main():
         model = build_model(config)
     model = model.to(device)
     
+    # Load pretrained backbone if specified in config
+    pretrained_path = config['model'].get('pretrained_backbone')
+    if pretrained_path:
+        logger.info(f"Loading pretrained backbone from: {pretrained_path}")
+        model.load_pretrained_backbone(pretrained_path)
+        logger.info("Pretrained backbone loaded successfully")
+    
+    # Freeze backbone if specified in config
+    if config['model'].get('freeze_backbone', False):
+        for param in model.image_backbone.parameters():
+            param.requires_grad = False
+        logger.info("Backbone parameters frozen")
+    
     # Log model info
     logger.log_model_info(model)
     

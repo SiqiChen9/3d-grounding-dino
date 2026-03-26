@@ -252,6 +252,54 @@ class GroundingDETR3D(nn.Module):
         """Count trainable parameters."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    def load_pretrained_backbone(self, pretrained_path: str, strict: bool = False) -> None:
+        """
+        Load pretrained Swin3D backbone weights from pretraining checkpoint.
+        
+        Supports two formats:
+        1. Backbone-only: {'backbone_state_dict': ...}
+        2. Full pretrain checkpoint: {'backbone_state_dict': ..., 'model_state_dict': ...}
+        
+        Note: The output_proj layer is NOT loaded since pretraining uses
+        raw backbone features while detection uses projected features.
+        
+        Args:
+            pretrained_path: Path to pretrained checkpoint file.
+            strict: If True, require exact key matching (default: False).
+        """
+        checkpoint = torch.load(pretrained_path, map_location='cpu')
+        
+        if 'backbone_state_dict' in checkpoint:
+            backbone_state = checkpoint['backbone_state_dict']
+        elif 'model_state_dict' in checkpoint:
+            # Extract backbone keys from full model state dict
+            # Keys look like: backbone.patch_embed.proj.weight -> patch_embed.proj.weight
+            full_state = checkpoint['model_state_dict']
+            backbone_state = {}
+            for k, v in full_state.items():
+                if k.startswith('backbone.'):
+                    backbone_state[k[len('backbone.'):]] = v
+        else:
+            raise ValueError(f"Cannot find backbone weights in {pretrained_path}. "
+                             f"Available keys: {list(checkpoint.keys())}")
+        
+        # Load into image_backbone (skip output_proj if present/missing)
+        missing, unexpected = self.image_backbone.load_state_dict(
+            backbone_state, strict=strict
+        )
+        
+        print(f"Loaded pretrained backbone from: {pretrained_path}")
+        if missing:
+            print(f"  Missing keys: {missing}")
+        if unexpected:
+            print(f"  Unexpected keys: {unexpected}")
+        
+        # Report pretrain info if available
+        if 'epoch' in checkpoint:
+            print(f"  Pretrained for {checkpoint['epoch'] + 1} epochs")
+        if 'best_val_auroc' in checkpoint:
+            print(f"  Best val AUROC: {checkpoint['best_val_auroc']:.4f}")
+
 
 def build_model(config: dict) -> GroundingDETR3D:
     """
