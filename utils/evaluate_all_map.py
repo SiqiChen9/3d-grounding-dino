@@ -6,7 +6,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.data import random_split
+from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 from datasets import RSNAVolumeDataset
@@ -56,12 +56,12 @@ def evaluate_map_on_split(split_dataset, split_name, model, device, num_classes,
     all_predictions = []
     all_ground_truths = []
 
-    print(f"Evaluating {split_name} split ({num_samples} samples)...")
-    for idx in tqdm(range(num_samples), desc=f"{split_name} inference"):
-        sample = split_dataset[idx]
+    loader = DataLoader(split_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
 
-        with torch.no_grad():
-            volume_input = sample["volume"].unsqueeze(0).to(device).float()
+    print(f"Evaluating {split_name} split ({num_samples} samples)...")
+    with torch.inference_mode():
+        for batch in tqdm(loader, desc=f"{split_name} inference"):
+            volume_input = batch["volume"].to(device).float()
             outputs = model(volume_input)
 
             pred_logits = outputs["pred_logits"][0]
@@ -79,12 +79,12 @@ def evaluate_map_on_split(split_dataset, split_name, model, device, num_classes,
                 }
             )
 
-        all_ground_truths.append(
-            {
-                "boxes": sample["boxes"].numpy(),
-                "labels": sample["labels"].numpy(),
-            }
-        )
+            all_ground_truths.append(
+                {
+                    "boxes": batch["boxes"][0].cpu().numpy(),
+                    "labels": batch["labels"][0].cpu().numpy(),
+                }
+            )
 
     return compute_map(
         predictions=all_predictions,
