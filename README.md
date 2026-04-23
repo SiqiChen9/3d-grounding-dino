@@ -254,7 +254,7 @@ python utils/evaluate_all_map.py --checkpoint checkpoints/my_experiment/best_mod
 You can also integrate this script into the slurm by adding:
 
 ```bash
-python evaluate_map_splits.py  --output-dir "./outputs/$SLURM_JOB_ID"
+python utils/evaluate_all_map.py --output-dir "./outputs/$SLURM_JOB_ID"
 ```
 
 ### 7. Run Unit Tests
