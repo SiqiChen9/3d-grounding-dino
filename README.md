@@ -248,13 +248,13 @@ jupyter notebook predictions_visualization.ipynb
 Or run the python script to visualize the predictions for train, validation and test :
 
 ```bash
-python utils/evaluate_all_map.py --checkpoint checkpoints/my_experiment/best_model.pth
+python evaluate_all_map.py --checkpoint checkpoints/my_experiment/best_model.pth
 ```
 
 You can also integrate this script into the slurm by adding:
 
 ```bash
-python utils/evaluate_all_map.py --output-dir "./outputs/$SLURM_JOB_ID"
+python evaluate_all_map.py --output-dir "./outputs/$SLURM_JOB_ID"
 ```
 
 ### 7. Run Unit Tests
