@@ -205,6 +205,12 @@ python train.py --debug
 
 ### 5. View Training Results
 
+After pretraining, you can visualize the training metrics and loss curves using the provided plotting utility:
+
+```bash
+python utils/visualize_pretrain_metrics.py --log-dir ./pretrain_logs 
+```
+
 After training, visualize the training metrics and loss curves:
 
 ```bash
@@ -238,6 +244,18 @@ jupyter notebook predictions_visualization.ipynb
 - Multi-slice views (axial/sagittal/coronal)
 - mAP calculation at multiple IoU thresholds
 - Per-class Average Precision analysis
+
+Or run the python script to visualize the predictions for train, validation and test :
+
+```bash
+python -m utils.evaluate_all_map --checkpoint checkpoints/my_experiment/best_model.pth
+```
+
+You can also integrate this script into the slurm by adding:
+
+```bash
+python -m utils.evaluate_all_map --output-dir "./outputs/$SLURM_JOB_ID"
+```
 
 ### 7. Run Unit Tests
 
