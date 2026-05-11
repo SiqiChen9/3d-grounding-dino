@@ -1,0 +1,120 @@
+# 3D RetinaNet 配置文件
+# 用于与 3D Grounding DINO 对比的基线检测模型
+
+# 数据集配置
+data:
+  dataset_path: /home/woody/iwi5/iwi5378h/rsna2023  # RSNA 数据集路径
+  target_width: 64   # 目标宽度（第2维度），其他维度按比例缩放 [改为 64 以节省内存]
+  batch_size: 1      # 批次大小 [改为 1 以节省 GPU 内存]
+  num_workers: 4     # 数据加载线程 [改为 4 以减少冲突]
+  train_split: 0.7   # 70% 用于训练
+  val_split: 0.15    # 15% 用于验证
+  test_split: 0.15   # 15% 用于测试
+  random_seed: 42    # 固定种子以保证可复现性
+  augment: true      # 是否使用数据增强
+  image_format: numpy  # 图像格式: dcm (DICOM), jpeg, 或 numpy (预转换的 .npz 文件)
+  persistent_workers: false  # 关闭持久 worker 以节省内存
+  prefetch_factor: 1         # 减少预取缓冲区
+
+# 模型配置
+model:
+  # 基本参数
+  num_classes: 1       # 类别数（单类对象检测）
+  in_channels: 1       # 输入通道数（CT 图像为单通道）
+  num_anchors: 9       # 每个特征图位置的锚点数 (3 scales × 3 ratios)
+  
+  # 骨干网络配置
+  backbone_type: resnet  # ResNet18 骨干网络
+  backbone_depth: 18
+  backbone_out_channels: 512  # ResNet 输出特征通道数
+  
+  # 特征金字塔网络
+  fpn_channels: 256
+  fpn_levels: 5  # P3-P7
+  
+  # 检测头配置
+  detection_head_channels: 256
+  detection_head_layers: 4  # 分类和回归分支的卷积层数
+  
+  # 锚点生成配置
+  anchor_scales: [1.0, 1.25, 1.5]  # 锚点尺度
+  anchor_ratios: [1.0]               # 锚点宽高比
+  feature_stride: 8                  # 特征图步长
+  image_size: [64, 64, 64]          # 输入体积大小 (D, H, W)
+
+# 损失函数配置
+loss:
+  # 焦点损失参数
+  focal_alpha: 0.25  # 焦点损失中的 alpha 参数
+  focal_gamma: 2.0   # 焦点损失中的 gamma 参数（聚焦参数）
+  
+  # 损失权重
+  weight_cls: 1.0    # 分类损失权重
+  weight_bbox: 1.0   # 边界框回归损失权重
+  
+  # 边界框参数化
+  bbox_loss_type: smooth_l1  # 回归损失类型
+
+# 训练配置
+training:
+  epochs: 500
+  lr: 0.0001  # 初始学习率
+  weight_decay: 0.01  # L2 正则化
+  momentum: 0.9       # SGD momentum (如果使用 SGD)
+  
+  # 学习率调度
+  lr_scheduler: cosine  # cosine, linear, step
+  warmup_epochs: 50
+  warmup_ratio: 0.1
+  
+  # 训练细节
+  clip_max_norm: 100.0  # 梯度裁剪
+  log_interval: 10      # 日志打印间隔
+  val_interval: 10      # 验证间隔
+  save_interval: 10     # 模型保存间隔
+  
+  # 数据加载
+  pin_memory: true
+  drop_last: true
+
+# 验证和测试配置
+inference:
+  confidence_threshold: 0.5  # 目标置信度阈值
+  nms_threshold: 0.5         # NMS (非极大值抑制) 阈值
+  nms_3d: true               # 是否使用 3D NMS
+  max_detections: 100        # 每个体积最大检测数
+  
+  # 评估指标
+  eval_metrics: [ap50, ap75, map, ar]  # 平均精度指标
+
+# 检查点和日志配置
+checkpoint:
+  save_dir: ./checkpoints/retinanet  # 模型保存目录
+  best_model_name: model_best.pth
+  final_model_name: model_final.pth
+  resume: null  # 恢复检查点的路径
+  
+  # 早停配置
+  early_stop: true
+  early_stop_patience: 50
+  early_stop_metric: val_loss
+
+# 日志配置
+logging:
+  log_dir: ./logs/retinanet
+  tensorboard: true
+  log_name: retinanet_%Y%m%d_%H%M%S  # 时间格式日志名称
+
+# 优化和硬件配置
+optimization:
+  amp: false  # 混合精度训练 (Automatic Mixed Precision)
+  gradient_accumulation: 1  # 梯度累积步数
+  num_threads: 1  # PyTorch 线程数
+  deterministic: true  # 确定性计算
+
+# 调试和实验配置
+debug:
+  demo_mode: false  # 是否为演示模式（使用随机数据）
+  num_debug_samples: 10  # 调试时的样本数
+  print_model_summary: true  # 打印模型摘要
+  visualize_anchors: false  # 可视化锚点

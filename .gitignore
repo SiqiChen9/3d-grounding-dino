@@ -59,6 +59,7 @@ inference_results/
 demo_results/
 batch_visualizations/
 *.png
+!Retinanet/training.png
 *.jpg
 *.jpeg
 *.gif
